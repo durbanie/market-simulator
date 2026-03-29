@@ -173,8 +173,6 @@ Create a Clock object to provide timestamps. Time should be modeled in one of th
 2. In fast simulation mode, the clock passes through a modeled time. The clock should have a method on it for advancing time only, either advance by some delta, or fast-forward to some specified time.  
 3. In real time simulation mode, the clock advances time, but time fast-forward calls also “wait” (sleep) until the new (pseudo) time actually occurs. Fast-forward calls to a timestamp in the past should not sleep to allow for catch up in case simulated time falls behind the (pseudo) real-time.
 
-The Clock should allow switching between these options.
-
 The Clock is owned by the simulation runner (or test harness). The runner reads timestamps from the order message CSV and advances the clock to each timestamp before processing the corresponding message. In tests, time can be arbitrarily advanced as needed. At this stage, participants do not interact with the clock directly; if participants need to advance or query time in future phases, appropriate APIs will be designed at that point.
 
 The exchange should have a configurable fee structure (e.g. makers get a rebate of 3bps, and takers pay a fee of 7bps). Fees and rebates are paid on fill and are rounded to the nearest $0.01, with fees rounded up and rebates rounded down. There is a minimum taker fee of $0.02 and a minimum maker rebate of $0.01, ensuring both the exchange and the maker always profit on each trade. For logging purposes, rebates and fees are both logged as fees. A rebate is a negative-valued fee.
@@ -211,6 +209,8 @@ The order book data structure should implement a price-time priority, and effici
 - Order objects carry a `price` back-reference (to price level) and a `status` field.  
 - `order_map` is a plain Python `dict` keyed on `order_id.`  
 - Bids and asks are separate `SortedDict` instances — no shared structure.
+
+The order book is a pure data structure — it manages price-time priority queues but does not interpret modify semantics. The Exchange is responsible for all business logic: determining whether a modify loses time priority, computing updated `remaining_quantity`, and constructing client responses. The order book's `modify_order` method simply applies the caller-provided field updates and repositions the order in the queue if told to.
 
 Matching should work as follows:
 

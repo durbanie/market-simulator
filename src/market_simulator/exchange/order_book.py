@@ -71,31 +71,37 @@ class OrderBook:
         order_id: int,
         new_price: Decimal | None,
         new_quantity: Decimal,
+        new_remaining: Decimal,
         loses_priority: bool,
     ) -> Order | None:
         """Modify an order's price and/or quantity.
 
+        This is a low-level method — the caller (Exchange) is responsible
+        for computing field updates and determining whether priority is
+        lost. This method simply applies the updates and repositions the
+        order in the queue if needed.
+
         Args:
             order_id: The order to modify.
             new_price: New limit price, or None to keep the current price.
-            new_quantity: New total quantity. The remaining quantity is
-                recomputed as new_quantity minus the amount already filled.
+            new_quantity: New total quantity (caller computes this).
+            new_remaining: New remaining quantity (caller computes this).
             loses_priority: If True, the order is removed from its current
                 queue position and placed at the back of the (possibly
-                new) price level. Otherwise, the order is modified in
-                place.
+                new) price level. Otherwise, modified in place.
 
-        Returns the modified order, or None if the order is no longer
-        active (cancelled/filled).
+        Returns the modified order, or None if the order is not found
+        or no longer active (cancelled/filled).
         """
-        order = self._order_map[order_id]
+        order = self._order_map.get(order_id)
+        if order is None:
+            return None
 
         if not self._is_active(order):
             return None
 
-        filled = order.quantity - order.remaining_quantity
         order.quantity = new_quantity
-        order.remaining_quantity = new_quantity - filled
+        order.remaining_quantity = new_remaining
 
         if not loses_priority:
             return order
@@ -103,6 +109,7 @@ class OrderBook:
         # Remove from current queue position. The order may already have
         # been removed from the deque by lazy deletion in _peek_best, so
         # we silently handle the case where it is not found.
+        # TODO: Add lazy logging (log_every_N) for swallowed errors.
         book = self._side_book(order.side)
         old_key = self._price_key(order.side, order.price)
         if old_key in book:
