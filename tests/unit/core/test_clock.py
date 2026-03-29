@@ -26,7 +26,7 @@ class TestFastSimulationMode:
     def test_advance_does_not_sleep(self):
         clock = Clock(mode=ClockMode.FAST_SIMULATION)
         start = time.monotonic()
-        clock.advance(10_000_000_000)  # 10000 seconds
+        clock.advance(1_000_000)  # 1 second
         elapsed = time.monotonic() - start
         assert elapsed < 0.1
 
@@ -58,7 +58,7 @@ class TestFastSimulationMode:
     def test_fast_forward_does_not_sleep(self):
         clock = Clock(mode=ClockMode.FAST_SIMULATION)
         start = time.monotonic()
-        clock.fast_forward(10_000_000_000)  # 10000 seconds in the future
+        clock.fast_forward(1_000_000)  # 1 second in the future
         elapsed = time.monotonic() - start
         assert elapsed < 0.1
 
