@@ -1,0 +1,12 @@
+# VS Code (machine-specific settings)
+.vscode/
+
+# Simulation output data
+data/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
