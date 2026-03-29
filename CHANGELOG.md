@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.1.1 — Project scaffolding and enums
+
+- Create directory structure: `src/market_simulator/{core,exchange,exchange/client,runner}`, `tests/{unit,e2e,fixtures}`, `scripts/`, `configs/`
+- Add core enums using `StrEnum`: `Side`, `OrderType`, `OrderStatus`, `RejectionReason`, `Action`
+- Fix `pyproject.toml` build backend (`setuptools.build_meta`)
+- Add unit tests for all enums
+
 ## v1.0.0 — Initial project setup
 
 - Add `DESIGNDOC.md` with full project design: overview, feasibility analysis, 8-phase roadmap, software engineering principles, directory structure, and Phase 1 Iteration 1 detailed design
