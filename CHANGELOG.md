@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.1.4 — Order book
+
+- Add `OrderBook` class in `exchange/order_book.py` with price-time priority using `SortedDict` and `deque`
+- Bids use negated price keys for descending sort; asks use natural ascending sort
+- Lazy deletion of cancelled/filled orders during peek operations, explicit `cleanup()` for bulk removal
+- Methods: `add_order`, `cancel_order`, `get_order`, `modify_order` (with priority loss flag), `best_bid`/`best_ask`, `peek_best_bid`/`peek_best_ask`, `get_depth`, `cleanup`
+- Add 42 unit tests covering empty book, price-time priority, FIFO within level, cancel, lazy deletion, modify with/without priority loss, depth reporting, cleanup, and edge cases (98% coverage)
+
 ## v1.1.3 — Order and Transaction data classes
 
 - Add `Order` dataclass in `exchange/data.py` with all fields from the design doc (IDs, timestamps, instrument, side, order type, price, quantity, status, rejection reason)
