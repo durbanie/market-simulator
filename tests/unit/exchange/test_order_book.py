@@ -33,11 +33,11 @@ def _make_order(
 class TestEmptyBook:
     def test_best_bid_is_none(self):
         book = OrderBook("XYZ")
-        assert book.best_bid() is None
+        assert book.best_bid_price() is None
 
     def test_best_ask_is_none(self):
         book = OrderBook("XYZ")
-        assert book.best_ask() is None
+        assert book.best_ask_price() is None
 
     def test_peek_best_bid_is_none(self):
         book = OrderBook("XYZ")
@@ -65,28 +65,28 @@ class TestAddAndBestPrice:
     def test_single_bid(self):
         book = OrderBook("XYZ")
         book.add_order(_make_order(1, Side.BUY, Decimal("50.00")))
-        assert book.best_bid() == Decimal("50.00")
-        assert book.best_ask() is None
+        assert book.best_bid_price() == Decimal("50.00")
+        assert book.best_ask_price() is None
 
     def test_single_ask(self):
         book = OrderBook("XYZ")
         book.add_order(_make_order(1, Side.SELL, Decimal("55.00")))
-        assert book.best_ask() == Decimal("55.00")
-        assert book.best_bid() is None
+        assert book.best_ask_price() == Decimal("55.00")
+        assert book.best_bid_price() is None
 
     def test_best_bid_is_highest(self):
         book = OrderBook("XYZ")
         book.add_order(_make_order(1, Side.BUY, Decimal("49.00")))
         book.add_order(_make_order(2, Side.BUY, Decimal("51.00")))
         book.add_order(_make_order(3, Side.BUY, Decimal("50.00")))
-        assert book.best_bid() == Decimal("51.00")
+        assert book.best_bid_price() == Decimal("51.00")
 
     def test_best_ask_is_lowest(self):
         book = OrderBook("XYZ")
         book.add_order(_make_order(1, Side.SELL, Decimal("56.00")))
         book.add_order(_make_order(2, Side.SELL, Decimal("54.00")))
         book.add_order(_make_order(3, Side.SELL, Decimal("55.00")))
-        assert book.best_ask() == Decimal("54.00")
+        assert book.best_ask_price() == Decimal("54.00")
 
 
 class TestPriceTimePriority:
@@ -143,7 +143,7 @@ class TestCancelOrder:
         book.add_order(o1)
         book.add_order(o2)
         book.cancel_order(1)
-        assert book.best_bid() == Decimal("50.00")
+        assert book.best_bid_price() == Decimal("50.00")
 
     def test_cancelled_order_skipped_by_best_ask(self):
         book = OrderBook("XYZ")
@@ -152,13 +152,13 @@ class TestCancelOrder:
         book.add_order(o1)
         book.add_order(o2)
         book.cancel_order(1)
-        assert book.best_ask() == Decimal("55.00")
+        assert book.best_ask_price() == Decimal("55.00")
 
     def test_cancel_all_bids_gives_none(self):
         book = OrderBook("XYZ")
         book.add_order(_make_order(1, Side.BUY, Decimal("50.00")))
         book.cancel_order(1)
-        assert book.best_bid() is None
+        assert book.best_bid_price() is None
         assert book.peek_best_bid() is None
 
 
@@ -216,7 +216,8 @@ class TestModifyOrder:
         book.add_order(o1)
         book.add_order(o2)
         # Reduce quantity — keeps priority.
-        book.modify_order(1, new_price=None, new_remaining=Decimal("50"), loses_priority=False)
+        result = book.modify_order(1, new_price=None, new_remaining=Decimal("50"), loses_priority=False)
+        assert result is o1
         assert o1.remaining_quantity == Decimal("50")
         # o1 is still at the front.
         assert book.peek_best_bid() is o1
@@ -228,7 +229,8 @@ class TestModifyOrder:
         book.add_order(o1)
         book.add_order(o2)
         # Increase quantity — loses priority.
-        book.modify_order(1, new_price=None, new_remaining=Decimal("150"), loses_priority=True)
+        result = book.modify_order(1, new_price=None, new_remaining=Decimal("150"), loses_priority=True)
+        assert result is o1
         assert o1.remaining_quantity == Decimal("150")
         # o2 should now be at the front.
         assert book.peek_best_bid() is o2
@@ -240,9 +242,10 @@ class TestModifyOrder:
         book.add_order(o1)
         book.add_order(o2)
         # Move to better price — loses priority at new level.
-        book.modify_order(1, new_price=Decimal("51.00"), new_remaining=Decimal("100"), loses_priority=True)
+        result = book.modify_order(1, new_price=Decimal("51.00"), new_remaining=Decimal("100"), loses_priority=True)
+        assert result is o1
         assert o1.price == Decimal("51.00")
-        assert book.best_bid() == Decimal("51.00")
+        assert book.best_bid_price() == Decimal("51.00")
         assert book.peek_best_bid() is o1
 
     def test_modify_price_change_to_worse_price(self):
@@ -253,8 +256,26 @@ class TestModifyOrder:
         book.add_order(o2)
         # Move o1 to worse price.
         book.modify_order(1, new_price=Decimal("49.00"), new_remaining=Decimal("100"), loses_priority=True)
-        assert book.best_bid() == Decimal("50.00")
+        assert book.best_bid_price() == Decimal("50.00")
         assert book.peek_best_bid() is o2
+
+    def test_modify_cancelled_order_returns_none(self):
+        book = OrderBook("XYZ")
+        o = _make_order(1, Side.BUY, Decimal("50.00"), Decimal("100"))
+        book.add_order(o)
+        book.cancel_order(1)
+        result = book.modify_order(1, new_price=None, new_remaining=Decimal("50"), loses_priority=False)
+        assert result is None
+        # Original remaining_quantity unchanged.
+        assert o.remaining_quantity == Decimal("100")
+
+    def test_modify_filled_order_returns_none(self):
+        book = OrderBook("XYZ")
+        o = _make_order(1, Side.SELL, Decimal("55.00"), Decimal("100"))
+        book.add_order(o)
+        o.status = OrderStatus.FILLED
+        result = book.modify_order(1, new_price=Decimal("56.00"), new_remaining=Decimal("100"), loses_priority=True)
+        assert result is None
 
 
 class TestGetDepth:

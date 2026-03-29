@@ -8,6 +8,9 @@ from sortedcontainers import SortedDict
 from market_simulator.core.exchange_enums import OrderStatus, Side
 from market_simulator.exchange.data import Order
 
+# (price, total_quantity) for a single price level in depth output.
+DepthLevel = tuple[Decimal, Decimal]
+
 
 class OrderBook:
     """Maintains a price-time priority order book for a single instrument.
@@ -69,7 +72,7 @@ class OrderBook:
         new_price: Decimal | None,
         new_remaining: Decimal,
         loses_priority: bool,
-    ) -> None:
+    ) -> Order | None:
         """Modify an order's price and/or remaining quantity.
 
         If loses_priority is True, the order is removed from its current
@@ -78,14 +81,22 @@ class OrderBook:
 
         The caller (Exchange) is responsible for determining whether
         priority is lost and computing the new remaining quantity.
+
+        Returns the modified order, or None if the order is no longer
+        active (cancelled/filled).
         """
         order = self._order_map[order_id]
 
+        if not self._is_active(order):
+            return None
+
         if not loses_priority:
             order.remaining_quantity = new_remaining
-            return
+            return order
 
-        # Remove from current queue position.
+        # Remove from current queue position. The order may already have
+        # been removed from the deque by lazy deletion in _peek_best, so
+        # we silently handle the case where it is not found.
         book = self._side_book(order.side)
         old_key = self._price_key(order.side, order.price)
         if old_key in book:
@@ -105,8 +116,9 @@ class OrderBook:
         if new_key not in book:
             book[new_key] = deque()
         book[new_key].append(order)
+        return order
 
-    def best_bid(self) -> Decimal | None:
+    def best_bid_price(self) -> Decimal | None:
         """Return the highest bid price, or None if no active bids."""
         for neg_price in self._bids:
             queue = self._bids[neg_price]
@@ -114,7 +126,7 @@ class OrderBook:
                 return -neg_price
         return None
 
-    def best_ask(self) -> Decimal | None:
+    def best_ask_price(self) -> Decimal | None:
         """Return the lowest ask price, or None if no active asks."""
         for price in self._asks:
             queue = self._asks[price]
@@ -147,7 +159,7 @@ class OrderBook:
                 return queue[0]
         return None
 
-    def get_depth(self, levels: int) -> dict[str, list[tuple[Decimal, Decimal]]]:
+    def get_depth(self, levels: int) -> dict[str, list[DepthLevel]]:
         """Return the top N price levels per side.
 
         Skips empty levels and cancelled/filled orders when summing
@@ -155,7 +167,9 @@ class OrderBook:
 
         Returns:
             Dict with "bids" and "asks" keys, each containing a list of
-            (price, total_quantity) tuples sorted best-to-worst.
+            DepthLevel tuples sorted best-to-worst (highest bid first,
+            lowest ask first) — ready for display in standard market
+            depth format.
         """
         bids = self._get_side_depth(self._bids, Side.BUY, levels)
         asks = self._get_side_depth(self._asks, Side.SELL, levels)
@@ -163,7 +177,7 @@ class OrderBook:
 
     def _get_side_depth(
         self, book: SortedDict, side: Side, levels: int,
-    ) -> list[tuple[Decimal, Decimal]]:
+    ) -> list[DepthLevel]:
         """Aggregate depth for one side of the book."""
         result = []
         for key in book:
