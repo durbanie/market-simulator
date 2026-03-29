@@ -70,17 +70,20 @@ class OrderBook:
         self,
         order_id: int,
         new_price: Decimal | None,
-        new_remaining: Decimal,
+        new_quantity: Decimal,
         loses_priority: bool,
     ) -> Order | None:
-        """Modify an order's price and/or remaining quantity.
+        """Modify an order's price and/or quantity.
 
-        If loses_priority is True, the order is removed from its current
-        queue position and placed at the back of the (possibly new) price
-        level. Otherwise, the order is modified in place.
-
-        The caller (Exchange) is responsible for determining whether
-        priority is lost and computing the new remaining quantity.
+        Args:
+            order_id: The order to modify.
+            new_price: New limit price, or None to keep the current price.
+            new_quantity: New total quantity. The remaining quantity is
+                recomputed as new_quantity minus the amount already filled.
+            loses_priority: If True, the order is removed from its current
+                queue position and placed at the back of the (possibly
+                new) price level. Otherwise, the order is modified in
+                place.
 
         Returns the modified order, or None if the order is no longer
         active (cancelled/filled).
@@ -90,8 +93,11 @@ class OrderBook:
         if not self._is_active(order):
             return None
 
+        filled = order.quantity - order.remaining_quantity
+        order.quantity = new_quantity
+        order.remaining_quantity = new_quantity - filled
+
         if not loses_priority:
-            order.remaining_quantity = new_remaining
             return order
 
         # Remove from current queue position. The order may already have
@@ -106,10 +112,9 @@ class OrderBook:
             except ValueError:
                 pass
 
-        # Update fields.
+        # Update price if changed.
         if new_price is not None:
             order.price = new_price
-        order.remaining_quantity = new_remaining
 
         # Re-add at back of (possibly new) price level.
         new_key = self._price_key(order.side, order.price)

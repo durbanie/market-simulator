@@ -216,8 +216,9 @@ class TestModifyOrder:
         book.add_order(o1)
         book.add_order(o2)
         # Reduce quantity — keeps priority.
-        result = book.modify_order(1, new_price=None, new_remaining=Decimal("50"), loses_priority=False)
+        result = book.modify_order(1, new_price=None, new_quantity=Decimal("50"), loses_priority=False)
         assert result is o1
+        assert o1.quantity == Decimal("50")
         assert o1.remaining_quantity == Decimal("50")
         # o1 is still at the front.
         assert book.peek_best_bid() is o1
@@ -229,7 +230,7 @@ class TestModifyOrder:
         book.add_order(o1)
         book.add_order(o2)
         # Increase quantity — loses priority.
-        result = book.modify_order(1, new_price=None, new_remaining=Decimal("150"), loses_priority=True)
+        result = book.modify_order(1, new_price=None, new_quantity=Decimal("150"), loses_priority=True)
         assert result is o1
         assert o1.remaining_quantity == Decimal("150")
         # o2 should now be at the front.
@@ -242,7 +243,7 @@ class TestModifyOrder:
         book.add_order(o1)
         book.add_order(o2)
         # Move to better price — loses priority at new level.
-        result = book.modify_order(1, new_price=Decimal("51.00"), new_remaining=Decimal("100"), loses_priority=True)
+        result = book.modify_order(1, new_price=Decimal("51.00"), new_quantity=Decimal("100"), loses_priority=True)
         assert result is o1
         assert o1.price == Decimal("51.00")
         assert book.best_bid_price() == Decimal("51.00")
@@ -255,7 +256,7 @@ class TestModifyOrder:
         book.add_order(o1)
         book.add_order(o2)
         # Move o1 to worse price.
-        book.modify_order(1, new_price=Decimal("49.00"), new_remaining=Decimal("100"), loses_priority=True)
+        book.modify_order(1, new_price=Decimal("49.00"), new_quantity=Decimal("100"), loses_priority=True)
         assert book.best_bid_price() == Decimal("50.00")
         assert book.peek_best_bid() is o2
 
@@ -264,7 +265,7 @@ class TestModifyOrder:
         o = _make_order(1, Side.BUY, Decimal("50.00"), Decimal("100"))
         book.add_order(o)
         book.cancel_order(1)
-        result = book.modify_order(1, new_price=None, new_remaining=Decimal("50"), loses_priority=False)
+        result = book.modify_order(1, new_price=None, new_quantity=Decimal("50"), loses_priority=False)
         assert result is None
         # Original remaining_quantity unchanged.
         assert o.remaining_quantity == Decimal("100")
@@ -274,8 +275,23 @@ class TestModifyOrder:
         o = _make_order(1, Side.SELL, Decimal("55.00"), Decimal("100"))
         book.add_order(o)
         o.status = OrderStatus.FILLED
-        result = book.modify_order(1, new_price=Decimal("56.00"), new_remaining=Decimal("100"), loses_priority=True)
+        result = book.modify_order(1, new_price=Decimal("56.00"), new_quantity=Decimal("100"), loses_priority=True)
         assert result is None
+
+    def test_modify_preserves_filled_amount(self):
+        """When modifying quantity, remaining is recomputed from fills."""
+        book = OrderBook("XYZ")
+        o = _make_order(1, Side.BUY, Decimal("50.00"), Decimal("100"))
+        book.add_order(o)
+        # Simulate a partial fill: 30 of 100 filled.
+        o.status = OrderStatus.PARTIALLY_FILLED
+        o.remaining_quantity = Decimal("70")
+        # Modify total quantity from 100 to 120.
+        result = book.modify_order(1, new_price=None, new_quantity=Decimal("120"), loses_priority=True)
+        assert result is o
+        assert o.quantity == Decimal("120")
+        # 30 already filled, so remaining = 120 - 30 = 90.
+        assert o.remaining_quantity == Decimal("90")
 
 
 class TestGetDepth:
