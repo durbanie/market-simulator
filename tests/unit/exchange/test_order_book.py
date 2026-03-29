@@ -161,6 +161,21 @@ class TestCancelOrder:
         assert book.best_bid_price() is None
         assert book.peek_best_bid() is None
 
+    def test_cancel_already_filled_returns_none(self):
+        book = OrderBook("XYZ")
+        o = _make_order(1, Side.BUY, Decimal("50.00"))
+        book.add_order(o)
+        o.status = OrderStatus.FILLED
+        assert book.cancel_order(1) is None
+        assert o.status == OrderStatus.FILLED
+
+    def test_cancel_already_cancelled_returns_none(self):
+        book = OrderBook("XYZ")
+        o = _make_order(1, Side.BUY, Decimal("50.00"))
+        book.add_order(o)
+        book.cancel_order(1)
+        assert book.cancel_order(1) is None
+
 
 class TestLazyDeletion:
     def test_peek_skips_cancelled_at_front(self):

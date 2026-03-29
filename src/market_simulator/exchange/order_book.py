@@ -54,10 +54,11 @@ class OrderBook:
     def cancel_order(self, order_id: int) -> Order | None:
         """Mark an order as cancelled (lazy deletion).
 
-        Returns the order if found, None otherwise.
+        Returns the cancelled order, or None if the order was not found
+        or is no longer active (already filled, cancelled, or rejected).
         """
         order = self._order_map.get(order_id)
-        if order is None:
+        if order is None or not self._is_active(order):
             return None
         order.status = OrderStatus.CANCELLED
         return order
