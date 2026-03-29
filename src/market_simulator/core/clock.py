@@ -17,39 +17,31 @@ class Clock:
     Supports three modes:
     - REAL_TIME: passes through wall time with an optional offset.
     - FAST_SIMULATION: uses modeled time advanced explicitly by the caller.
-    - REAL_TIME_SIMULATION: uses modeled time, but fast_forward sleeps
-      until the target time actually arrives (skips sleep if behind).
-
-    The clock is owned by the simulation runner or test harness.
+    - REAL_TIME_SIMULATION: uses modeled time, but advance/fast_forward
+      sleep until the target time actually arrives (skips sleep if behind).
     """
 
     def __init__(
         self,
         mode: ClockMode = ClockMode.FAST_SIMULATION,
         offset_us: int = 0,
-        initial_time_us: int = 0,
     ) -> None:
         """Initialize the clock.
 
         Args:
             mode: The clock operating mode.
-            offset_us: Offset in microseconds added to wall time in
-                REAL_TIME and REAL_TIME_SIMULATION modes.
-            initial_time_us: Starting modeled time in microseconds for
-                FAST_SIMULATION and REAL_TIME_SIMULATION modes.
+            offset_us: In REAL_TIME mode, added to wall time. In
+                FAST_SIMULATION and REAL_TIME_SIMULATION modes, used as the
+                initial modeled time.
         """
         self._mode = mode
         self._offset_us = offset_us
-        self._modeled_time_us = initial_time_us
+        self._modeled_time_us = offset_us
 
     @property
     def mode(self) -> ClockMode:
         """Return the current clock mode."""
         return self._mode
-
-    def set_mode(self, mode: ClockMode) -> None:
-        """Switch the clock to a different mode."""
-        self._mode = mode
 
     def now(self) -> int:
         """Return the current time in integer microseconds from Unix epoch.
@@ -62,8 +54,19 @@ class Clock:
             return int(time.time() * 1_000_000) + self._offset_us
         return self._modeled_time_us
 
+    def _sleep_if_needed(self) -> None:
+        """In REAL_TIME_SIMULATION mode, sleep if modeled time is ahead."""
+        if self._mode == ClockMode.REAL_TIME_SIMULATION:
+            wall_time_us = int(time.time() * 1_000_000)
+            wait_us = self._modeled_time_us - wall_time_us
+            if wait_us > 0:
+                time.sleep(wait_us / 1_000_000)
+
     def advance(self, delta_us: int) -> None:
         """Advance modeled time by a delta.
+
+        In REAL_TIME_SIMULATION mode, sleeps if the new time is ahead of
+        wall time.
 
         Args:
             delta_us: Microseconds to advance. Must be non-negative.
@@ -77,6 +80,7 @@ class Clock:
         if delta_us < 0:
             raise ValueError("delta_us must be non-negative.")
         self._modeled_time_us += delta_us
+        self._sleep_if_needed()
 
     def fast_forward(self, timestamp_us: int) -> None:
         """Set modeled time to the given timestamp.
@@ -101,9 +105,4 @@ class Clock:
             )
 
         self._modeled_time_us = timestamp_us
-
-        if self._mode == ClockMode.REAL_TIME_SIMULATION:
-            wall_time_us = int(time.time() * 1_000_000) + self._offset_us
-            wait_us = timestamp_us - wall_time_us
-            if wait_us > 0:
-                time.sleep(wait_us / 1_000_000)
+        self._sleep_if_needed()
