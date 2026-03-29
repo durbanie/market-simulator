@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.1.2 — Clock
+
+- Add `Clock` class in `core/clock.py` with three modes: REAL_TIME (wall time passthrough with optional offset), FAST_SIMULATION (modeled time with explicit advance/fast-forward), and REAL_TIME_SIMULATION (modeled time with sleep-to-sync)
+- Add `ClockMode` enum
+- Add unit tests for all clock modes, mode switching, and error handling
+
 ## v1.1.1 — Project scaffolding and enums
 
 - Create directory structure: `src/market_simulator/{core,exchange,exchange/client,runner}`, `tests/{unit,e2e,fixtures}`, `scripts/`, `configs/`
