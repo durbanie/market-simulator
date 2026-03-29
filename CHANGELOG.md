@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.1.3 — Order and Transaction data classes
+
+- Add `Order` dataclass in `exchange/data.py` with all fields from the design doc (IDs, timestamps, instrument, side, order type, price, quantity, status, rejection reason)
+- Add `Transaction` dataclass for matched trades (IDs, timestamp, instrument, price, quantity, maker/taker order and participant IDs, fees)
+- Add unit tests for both data classes
+
 ## v1.1.2 — Clock
 
 - Add `Clock` class in `core/clock.py` with three modes: REAL_TIME (wall time passthrough with optional offset), FAST_SIMULATION (modeled time with explicit advance/fast-forward), and REAL_TIME_SIMULATION (modeled time with sleep-to-sync)
