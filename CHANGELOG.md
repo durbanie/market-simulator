@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.1.5 — Exchange core (order processing and validation)
+
+- Add `Exchange` class in `exchange/exchange.py` with configurable instruments, fee bps, and starting IDs
+- Add `ExchangeConfig` dataclass for exchange constructor configuration
+- Implement `register_participant`, `open`/`close`, `submit_order`, `modify_order`, `cancel_order`
+- Full validation with rejection reasons: exchange closed, unregistered participant, unsupported instrument/order type, non-positive price/quantity
+- Modify semantics per design doc: quantity decrease keeps priority, price change or quantity increase loses priority, new total <= filled marks FILLED
+- Query methods: `get_transactions`, `get_depth`, `get_order`
+- 37 unit tests at 99% coverage (matching and fees deferred to next PR)
+
 ## v1.1.4 — Order book
 
 - Add `OrderBook` class in `exchange/order_book.py` with price-time priority using `SortedDict` and `deque`
