@@ -93,24 +93,21 @@ class TestRealTimeSimulationMode:
         clock.advance(500)
         assert clock.now() == 500
 
-    def test_advance_to_past_wall_time_does_not_sleep(self):
-        # offset_us=0 means modeled time starts at 0, far in the past.
+    def test_advance_sleeps_for_delta(self):
         clock = Clock(mode=ClockMode.REAL_TIME_SIMULATION)
         start = time.monotonic()
-        clock.advance(1000)  # Still far in the past
-        elapsed = time.monotonic() - start
-        assert elapsed < 0.1
-        assert clock.now() == 1000
-
-    def test_advance_to_future_wall_time_sleeps(self):
-        wall_us = int(time.time() * 1_000_000)
-        clock = Clock(mode=ClockMode.REAL_TIME_SIMULATION, offset_us=wall_us)
-        start = time.monotonic()
-        clock.advance(200_000)  # 200ms ahead of wall time
+        clock.advance(200_000)  # 200ms delta
         elapsed = time.monotonic() - start
         assert elapsed >= 0.15
         assert elapsed < 0.5
-        assert clock.now() == wall_us + 200_000
+        assert clock.now() == 200_000
+
+    def test_advance_by_zero_does_not_sleep(self):
+        clock = Clock(mode=ClockMode.REAL_TIME_SIMULATION)
+        start = time.monotonic()
+        clock.advance(0)
+        elapsed = time.monotonic() - start
+        assert elapsed < 0.1
 
     def test_fast_forward_to_past_wall_time_does_not_sleep(self):
         clock = Clock(mode=ClockMode.REAL_TIME_SIMULATION)
