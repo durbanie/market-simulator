@@ -27,7 +27,7 @@ pytest --cov=market_simulator
 
 ## Development Workflow
 
-- **Branching**: `feat/short-description` or `fix/short-description`, always branch off `main`
+- **Branching**: `feat/short-description` or `fix/short-description`. Always `git checkout main && git pull` before creating a new branch
 - **Versioning**: `vX.Y.Z` — major = phase, minor = iteration (0 = pre-iteration setup), micro = PR
 - **PRs**: One logical change per PR. Include version bump in `CHANGELOG.md`
 - **PR description format**:
