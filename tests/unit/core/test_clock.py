@@ -23,6 +23,13 @@ class TestFastSimulationMode:
         clock.advance(300)
         assert clock.now() == 800
 
+    def test_advance_does_not_sleep(self):
+        clock = Clock(mode=ClockMode.FAST_SIMULATION)
+        start = time.monotonic()
+        clock.advance(10_000_000_000)  # 10000 seconds
+        elapsed = time.monotonic() - start
+        assert elapsed < 0.1
+
     def test_advance_by_zero(self):
         clock = Clock(mode=ClockMode.FAST_SIMULATION, offset_us=100)
         clock.advance(0)
@@ -118,9 +125,14 @@ class TestRealTimeSimulationMode:
         assert clock.now() == 1000
 
     def test_fast_forward_to_future_wall_time_sleeps(self):
-        wall_us = int(time.time() * 1_000_000)
-        clock = Clock(mode=ClockMode.REAL_TIME_SIMULATION, offset_us=wall_us)
-        target = wall_us + 200_000  # 200ms in the future
+        # Offset is 1 second in the past, so wall_time_us() returns
+        # approximately now - 1s. Fast-forwarding to now - 0.8s should
+        # sleep ~200ms (the gap between target and offset wall time).
+        offset_us = -1_000_000
+        clock = Clock(
+            mode=ClockMode.REAL_TIME_SIMULATION, offset_us=offset_us
+        )
+        target = int(time.time() * 1_000_000) - 800_000
         start = time.monotonic()
         clock.fast_forward(target)
         elapsed = time.monotonic() - start
@@ -137,3 +149,7 @@ class TestModeProperty:
     def test_mode_property_real_time(self):
         clock = Clock(mode=ClockMode.REAL_TIME)
         assert clock.mode == ClockMode.REAL_TIME
+
+    def test_mode_property_real_time_simulation(self):
+        clock = Clock(mode=ClockMode.REAL_TIME_SIMULATION)
+        assert clock.mode == ClockMode.REAL_TIME_SIMULATION

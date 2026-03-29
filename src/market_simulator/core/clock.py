@@ -43,6 +43,10 @@ class Clock:
         """Return the current clock mode."""
         return self._mode
 
+    def _wall_time_us(self) -> int:
+        """Return wall time in microseconds, adjusted by offset."""
+        return int(time.time() * 1_000_000) + self._offset_us
+
     def now(self) -> int:
         """Return the current time in integer microseconds from Unix epoch.
 
@@ -51,7 +55,7 @@ class Clock:
         modeled time.
         """
         if self._mode == ClockMode.REAL_TIME:
-            return int(time.time() * 1_000_000) + self._offset_us
+            return self._wall_time_us()
         return self._modeled_time_us
 
     def advance(self, delta_us: int) -> None:
@@ -99,7 +103,6 @@ class Clock:
         self._modeled_time_us = timestamp_us
 
         if self._mode == ClockMode.REAL_TIME_SIMULATION:
-            wall_time_us = int(time.time() * 1_000_000)
-            wait_us = timestamp_us - wall_time_us
+            wait_us = timestamp_us - self._wall_time_us()
             if wait_us > 0:
                 time.sleep(wait_us / 1_000_000)
