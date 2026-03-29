@@ -1,8 +1,8 @@
-"""Tests for core enums."""
+"""Tests for exchange enums."""
 
 import pytest
 
-from market_simulator.core.enums import (
+from market_simulator.core.exchange_enums import (
     Action,
     OrderStatus,
     OrderType,

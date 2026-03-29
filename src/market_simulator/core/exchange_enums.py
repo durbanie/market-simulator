@@ -1,4 +1,4 @@
-"""Core enums for the market simulator."""
+"""Exchange-related enums shared across components."""
 
 from enum import StrEnum
 
