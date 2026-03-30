@@ -5,6 +5,7 @@ from decimal import Decimal
 from market_simulator.core.clock import Clock, ClockMode
 from market_simulator.core.exchange_enums import (
     Action,
+    ExchangeState,
     OrderStatus,
     OrderType,
     RejectionReason,
@@ -69,17 +70,20 @@ def _submit_market(
 class TestOpenClose:
     def test_exchange_starts_closed(self):
         ex = _make_exchange()
+        assert ex.state == ExchangeState.CLOSED
         assert not ex.is_open
 
     def test_open(self):
         ex = _make_exchange()
         ex.open()
+        assert ex.state == ExchangeState.OPEN
         assert ex.is_open
 
     def test_close(self):
         ex = _make_exchange()
         ex.open()
         ex.close()
+        assert ex.state == ExchangeState.CLOSED
         assert not ex.is_open
 
 
@@ -103,6 +107,14 @@ class TestSubmitOrder:
         assert resp.request_status == RequestStatus.ACCEPTED
         assert resp.order_id == 1
         assert resp.rejection_reason is None
+        # Response includes full order state for DMA reconstruction.
+        assert resp.order_status == OrderStatus.ACCEPTED
+        assert resp.instrument == "XYZ"
+        assert resp.side == Side.BUY
+        assert resp.order_type == OrderType.LIMIT
+        assert resp.price == Decimal("50.00")
+        assert resp.quantity == Decimal("10")
+        assert resp.remaining_quantity == Decimal("10")
 
     def test_limit_sell_accepted(self):
         ex = _make_exchange()
@@ -349,6 +361,24 @@ class TestModifyOrder:
         ))
         assert resp.request_status == RequestStatus.MODIFIED
 
+    def test_modify_response_includes_order_fields(self):
+        ex = _make_exchange()
+        ex.open()
+        pid = _register(ex)
+        r = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("100"))
+        resp = ex.handle_order_message(OrderMessageRequest(
+            action=Action.MODIFY,
+            participant_id=pid,
+            order_id=r.order_id,
+            quantity=Decimal("80"),
+        ))
+        assert resp.order_status == OrderStatus.ACCEPTED
+        assert resp.instrument == "XYZ"
+        assert resp.side == Side.BUY
+        assert resp.price == Decimal("50")
+        assert resp.quantity == Decimal("80")
+        assert resp.remaining_quantity == Decimal("80")
+
     def test_modify_to_filled_when_new_total_lte_filled(self):
         ex = _make_exchange()
         ex.open()
@@ -430,6 +460,8 @@ class TestCancelOrder:
             order_id=r.order_id,
         ))
         assert resp.request_status == RequestStatus.CANCELLED
+        assert resp.order_status == OrderStatus.CANCELLED
+        assert resp.instrument == "XYZ"
         order = ex.get_order(r.order_id)
         assert order.status == OrderStatus.CANCELLED
 
@@ -482,7 +514,7 @@ class TestQueryMethods:
 
     def test_get_depth_unknown_instrument(self):
         ex = _make_exchange(instruments=["XYZ"])
-        assert ex.get_depth("ABC", 5) == {"bids": [], "asks": []}
+        assert ex.get_depth("ABC", 5) is None
 
     def test_get_depth_multiple_instruments(self):
         ex = _make_exchange(instruments=["XYZ", "ABC"])
@@ -503,6 +535,14 @@ class TestQueryMethods:
         order = ex.get_order(resp.order_id)
         assert order is not None
         assert order.order_id == resp.order_id
+
+    def test_get_order_with_instrument(self):
+        ex = _make_exchange(instruments=["XYZ", "ABC"])
+        ex.open()
+        pid = _register(ex)
+        resp = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
+        assert ex.get_order(resp.order_id, instrument="XYZ") is not None
+        assert ex.get_order(resp.order_id, instrument="ABC") is None
 
     def test_get_order_not_found(self):
         ex = _make_exchange()

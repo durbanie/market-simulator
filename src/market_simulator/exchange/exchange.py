@@ -6,6 +6,7 @@ from decimal import Decimal
 from market_simulator.core.clock import Clock
 from market_simulator.core.exchange_enums import (
     Action,
+    ExchangeState,
     OrderStatus,
     OrderType,
     RejectionReason,
@@ -48,9 +49,6 @@ class Exchange:
     per instrument, and tracks registered participants. Matching and
     fee logic are added in a subsequent layer.
 
-    Public API uses OrderMessageRequest/OrderMessageResponse to mirror
-    the future proto-based network interface.
-
     Args:
         config: Exchange configuration.
         clock: Clock instance for timestamps.
@@ -59,7 +57,7 @@ class Exchange:
     def __init__(self, config: ExchangeConfig, clock: Clock) -> None:
         self._config = config
         self._clock = clock
-        self._is_open = False
+        self._state = ExchangeState.CLOSED
 
         self._next_order_id = config.starting_order_id
         self._next_transaction_id = config.starting_transaction_id
@@ -76,16 +74,21 @@ class Exchange:
 
     def open(self) -> None:
         """Open the exchange for trading."""
-        self._is_open = True
+        self._state = ExchangeState.OPEN
 
     def close(self) -> None:
         """Close the exchange. Existing orders remain on the book."""
-        self._is_open = False
+        self._state = ExchangeState.CLOSED
+
+    @property
+    def state(self) -> ExchangeState:
+        """Current exchange operational state."""
+        return self._state
 
     @property
     def is_open(self) -> bool:
         """Whether the exchange is currently accepting orders."""
-        return self._is_open
+        return self._state == ExchangeState.OPEN
 
     # -- Public request handlers --------------------------------------------
 
@@ -139,37 +142,27 @@ class Exchange:
         if rejection is not None:
             order.status = OrderStatus.REJECTED
             order.rejection_reason = rejection
-            return OrderMessageResponse(
-                request_status=RequestStatus.REJECTED,
-                order_id=order_id,
-                rejection_reason=rejection,
+            return self._order_response(
+                RequestStatus.REJECTED, order, rejection,
             )
 
-        # Add limit orders to the book. Market orders are matched in the
-        # matching engine layer; for now they are rejected (no liquidity
-        # check yet, but market orders must always fill or reject).
+        # Add limit orders to the book.
         if order.order_type == OrderType.LIMIT:
             self._order_books[order.instrument].add_order(order)
-            return OrderMessageResponse(
-                request_status=RequestStatus.ACCEPTED,
-                order_id=order_id,
-            )
+            return self._order_response(RequestStatus.ACCEPTED, order)
 
-        # Market orders: matching not yet implemented. In this phase,
-        # market orders are always either filled or rejected — never
-        # resting. Matching PR will handle this; for now reject with
-        # NO_LIQUIDITY as a placeholder.
+        # Market orders must always fill or be rejected — never rest on
+        # the book. Matching engine will handle fills; for now reject
+        # with NO_LIQUIDITY.
         order.status = OrderStatus.REJECTED
         order.rejection_reason = RejectionReason.NO_LIQUIDITY
-        return OrderMessageResponse(
-            request_status=RequestStatus.REJECTED,
-            order_id=order_id,
-            rejection_reason=RejectionReason.NO_LIQUIDITY,
+        return self._order_response(
+            RequestStatus.REJECTED, order, RejectionReason.NO_LIQUIDITY,
         )
 
     def _validate_order(self, order: Order) -> RejectionReason | None:
         """Return a rejection reason, or None if the order is valid."""
-        if not self._is_open:
+        if not self.is_open:
             return RejectionReason.EXCHANGE_CLOSED
 
         if order.participant_id not in self._participants:
@@ -203,7 +196,7 @@ class Exchange:
                 order_id=request.order_id,
             )
 
-        if not OrderBook._is_active(order):
+        if not order.is_active:
             return OrderMessageResponse(
                 request_status=RequestStatus.ORDER_INACTIVE,
                 order_id=request.order_id,
@@ -220,10 +213,7 @@ class Exchange:
             order.quantity = request.quantity
             order.remaining_quantity = Decimal("0")
             order.status = OrderStatus.FILLED
-            return OrderMessageResponse(
-                request_status=RequestStatus.FILLED,
-                order_id=order.order_id,
-            )
+            return self._order_response(RequestStatus.FILLED, order)
 
         # Determine if time priority is lost.
         price_changed = (
@@ -246,10 +236,7 @@ class Exchange:
             if loses_priority
             else RequestStatus.MODIFIED
         )
-        return OrderMessageResponse(
-            request_status=status,
-            order_id=order.order_id,
-        )
+        return self._order_response(status, order)
 
     # -- Order cancellation -------------------------------------------------
 
@@ -264,7 +251,7 @@ class Exchange:
                 order_id=request.order_id,
             )
 
-        if not OrderBook._is_active(order):
+        if not order.is_active:
             return OrderMessageResponse(
                 request_status=RequestStatus.ORDER_INACTIVE,
                 order_id=request.order_id,
@@ -272,10 +259,7 @@ class Exchange:
 
         book = self._order_books[order.instrument]
         book.cancel_order(request.order_id)
-        return OrderMessageResponse(
-            request_status=RequestStatus.CANCELLED,
-            order_id=request.order_id,
-        )
+        return self._order_response(RequestStatus.CANCELLED, order)
 
     # -- Query methods ------------------------------------------------------
 
@@ -285,21 +269,56 @@ class Exchange:
 
     def get_depth(
         self, instrument: str, levels: int,
-    ) -> dict[str, list[DepthLevel]]:
-        """Return order book depth for an instrument."""
+    ) -> dict[str, list[DepthLevel]] | None:
+        """Return order book depth for an instrument, or None if unknown."""
         book = self._order_books.get(instrument)
         if book is None:
-            return {"bids": [], "asks": []}
+            return None
         return book.get_depth(levels)
 
-    def get_order(self, order_id: int) -> Order | None:
-        """Look up an order by ID across all order books."""
-        return self._find_order(order_id)
+    def get_order(
+        self, order_id: int, instrument: str | None = None,
+    ) -> Order | None:
+        """Look up an order by ID, optionally scoped to an instrument."""
+        return self._find_order(order_id, instrument)
 
     # -- Internal helpers ---------------------------------------------------
 
-    def _find_order(self, order_id: int) -> Order | None:
-        """Search all order books for an order by ID."""
+    @staticmethod
+    def _order_response(
+        request_status: RequestStatus,
+        order: Order,
+        rejection_reason: RejectionReason | None = None,
+    ) -> OrderMessageResponse:
+        """Build an OrderMessageResponse populated from an Order."""
+        return OrderMessageResponse(
+            request_status=request_status,
+            order_id=order.order_id,
+            rejection_reason=rejection_reason,
+            order_status=order.status,
+            instrument=order.instrument,
+            side=order.side,
+            order_type=order.order_type,
+            price=order.price,
+            quantity=order.quantity,
+            remaining_quantity=order.remaining_quantity,
+            creation_timestamp=order.creation_timestamp,
+            last_modified_timestamp=order.last_modified_timestamp,
+        )
+
+    def _find_order(
+        self, order_id: int, instrument: str | None = None,
+    ) -> Order | None:
+        """Search order books for an order by ID.
+
+        If instrument is provided, only that book is checked.
+        Otherwise, all books are searched.
+        """
+        if instrument is not None:
+            book = self._order_books.get(instrument)
+            if book is not None:
+                return book.get_order(order_id)
+            return None
         for book in self._order_books.values():
             order = book.get_order(order_id)
             if order is not None:

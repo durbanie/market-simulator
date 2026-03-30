@@ -35,6 +35,12 @@ class RejectionReason(StrEnum):
     NO_LIQUIDITY = "NO_LIQUIDITY"
 
 
+class ExchangeState(StrEnum):
+    """Exchange operational state."""
+    OPEN = "OPEN"
+    CLOSED = "CLOSED"
+
+
 class Action(StrEnum):
     """Order message action type for CSV parsing."""
     SUBMIT = "SUBMIT"

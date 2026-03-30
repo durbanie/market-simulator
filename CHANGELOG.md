@@ -14,6 +14,11 @@
 - Market orders rejected with `NO_LIQUIDITY` (matching engine deferred to next PR)
 - Modify semantics per design doc: quantity decrease keeps priority, price change or quantity increase loses priority, new total <= filled marks FILLED
 - Query methods: `get_transactions`, `get_depth`, `get_order`
+- Add `ExchangeState` enum (`OPEN`, `CLOSED`) to future-proof exchange operational states
+- Add `Order.is_active` property shared by `OrderBook` and `Exchange` (replaces private `_is_active`)
+- `OrderMessageResponse` includes full order state fields for DMA client reconstruction
+- `get_depth` returns `None` for unknown instruments
+- `get_order` / `_find_order` accept optional `instrument` for targeted lookup
 - Update `DESIGNDOC.md` with request/response architecture and rationale
 
 ## v1.1.4 — Order book

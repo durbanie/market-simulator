@@ -186,13 +186,13 @@ The public API consists of two methods:
 
 `OrderMessageRequest` contains: `action`, `participant_id`, and optional fields depending on the action: `instrument`, `side`, `order_type`, `price`, `quantity` (for SUBMIT); `order_id`, `price`, `quantity` (for MODIFY); `order_id` (for CANCEL).
 
-`OrderMessageResponse` contains: `request_status` (`RequestStatus` enum), `order_id` (the affected order's ID, or `None`), and `rejection_reason` (set only when rejected). `RequestStatus` is distinct from `OrderStatus` — it describes the outcome of a request, not the lifecycle state of an order. Its values are: `ACCEPTED`, `FILLED`, `MODIFIED`, `MODIFIED_PRIORITY_RESET`, `CANCELLED`, `REJECTED`, `ORDER_NOT_FOUND`, `ORDER_INACTIVE`.
+`OrderMessageResponse` contains: `request_status` (`RequestStatus` enum), `order_id`, `rejection_reason`, and flat fields mirroring the full order state (`order_status`, `instrument`, `side`, `order_type`, `price`, `quantity`, `remaining_quantity`, `creation_timestamp`, `last_modified_timestamp`). This allows DMA clients to reconstruct the order from the response without a separate query. All order fields are `None` when the order was not found. `RequestStatus` is distinct from `OrderStatus` — it describes the outcome of a request, not the lifecycle state of an order. Its values are: `ACCEPTED`, `FILLED`, `MODIFIED`, `MODIFIED_PRIORITY_RESET`, `CANCELLED`, `REJECTED`, `ORDER_NOT_FOUND`, `ORDER_INACTIVE`.
 
-The response uses flat fields rather than embedding `Order` or `Transaction` objects, keeping `core/messages.py` free of imports from `exchange/` and avoiding circular dependencies. The exchange manages `Order` objects internally; callers that need full order details can use `get_order(order_id)`.
+The response uses flat fields rather than embedding `Order` or `Transaction` objects, keeping `core/messages.py` free of imports from `exchange/` and avoiding circular dependencies.
 
 Submit, modify, and cancel logic are private to the exchange:
 
-- Submit accepts limit buy, limit sell, market buy, and market sell orders, assigning an `order_id` (incrementing from a configured starting value). Market orders must always fill or be rejected — they never rest on the book. In this phase (before the matching engine), market orders are rejected with `NO_LIQUIDITY`.
+- Submit accepts limit buy, limit sell, market buy, and market sell orders, assigning an `order_id` (incrementing from a configured starting value). Market orders must always fill or be rejected — they never rest on the book.
 - Modify allows changing price and/or quantity. The quantity in a modify request refers to the new total order quantity (not the remaining). If the new total is less than or equal to the already-filled quantity, the remaining is set to 0 and the order is marked `FILLED`. Otherwise, the remaining is adjusted to (new total - filled). A price change or an increase in remaining quantity loses time priority (the order is removed from its current queue position and placed at the back of the new or same price level) while retaining the same `order_id`. A decrease in remaining quantity modifies the order in place without losing time priority.
 - Cancel cancels the order if it is still active (not already cancelled or filled).  
 

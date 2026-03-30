@@ -58,7 +58,7 @@ class OrderBook:
         or is no longer active (already filled, cancelled, or rejected).
         """
         order = self._order_map.get(order_id)
-        if order is None or not self._is_active(order):
+        if order is None or not order.is_active:
             return None
         order.status = OrderStatus.CANCELLED
         return order
@@ -98,7 +98,7 @@ class OrderBook:
         if order is None:
             return None
 
-        if not self._is_active(order):
+        if not order.is_active:
             return None
 
         order.quantity = new_quantity
@@ -135,7 +135,7 @@ class OrderBook:
         """Return the highest bid price, or None if no active bids."""
         for neg_price in self._bids:
             queue = self._bids[neg_price]
-            if any(self._is_active(o) for o in queue):
+            if any(o.is_active for o in queue):
                 return -neg_price
         return None
 
@@ -143,7 +143,7 @@ class OrderBook:
         """Return the lowest ask price, or None if no active asks."""
         for price in self._asks:
             queue = self._asks[price]
-            if any(self._is_active(o) for o in queue):
+            if any(o.is_active for o in queue):
                 return price
         return None
 
@@ -166,7 +166,7 @@ class OrderBook:
         for key in book:
             queue = book[key]
             # Lazily remove inactive orders from the front.
-            while queue and not self._is_active(queue[0]):
+            while queue and not queue[0].is_active:
                 queue.popleft()
             if queue:
                 return queue[0]
@@ -198,7 +198,7 @@ class OrderBook:
                 break
             queue = book[key]
             total = sum(
-                o.remaining_quantity for o in queue if self._is_active(o)
+                o.remaining_quantity for o in queue if o.is_active
             )
             if total > 0:
                 price = -key if side == Side.BUY else key
@@ -215,7 +215,7 @@ class OrderBook:
             for key in book:
                 queue = book[key]
                 # Remove inactive orders from the queue.
-                active = deque(o for o in queue if self._is_active(o))
+                active = deque(o for o in queue if o.is_active)
                 book[key] = active
                 if not active:
                     keys_to_remove.append(key)
@@ -225,15 +225,8 @@ class OrderBook:
         # Remove inactive orders from the order map.
         inactive_ids = [
             oid for oid, o in self._order_map.items()
-            if not self._is_active(o)
+            if not o.is_active
         ]
         for oid in inactive_ids:
             del self._order_map[oid]
 
-    @staticmethod
-    def _is_active(order: Order) -> bool:
-        """Return True if the order can still be matched or modified."""
-        return order.status in (
-            OrderStatus.ACCEPTED,
-            OrderStatus.PARTIALLY_FILLED,
-        )

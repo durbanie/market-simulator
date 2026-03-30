@@ -88,6 +88,22 @@ class TestOrder:
         )
         assert order.quantity == Decimal("0.5000")
 
+    def test_is_active_for_each_status(self):
+        def _order_with_status(status):
+            return Order(
+                order_id=1, participant_id=1,
+                creation_timestamp=0, last_modified_timestamp=0,
+                instrument="XYZ", side=Side.BUY,
+                order_type=OrderType.LIMIT, price=Decimal("50"),
+                quantity=Decimal("10"), remaining_quantity=Decimal("10"),
+                status=status,
+            )
+        assert _order_with_status(OrderStatus.ACCEPTED).is_active
+        assert _order_with_status(OrderStatus.PARTIALLY_FILLED).is_active
+        assert not _order_with_status(OrderStatus.FILLED).is_active
+        assert not _order_with_status(OrderStatus.CANCELLED).is_active
+        assert not _order_with_status(OrderStatus.REJECTED).is_active
+
     def test_timestamps_are_integers(self):
         order = Order(
             order_id=5,

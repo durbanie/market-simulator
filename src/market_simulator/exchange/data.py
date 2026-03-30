@@ -43,6 +43,14 @@ class Order:
     status: OrderStatus
     rejection_reason: RejectionReason | None = None
 
+    @property
+    def is_active(self) -> bool:
+        """Whether the order can still be matched or modified."""
+        return self.status in (
+            OrderStatus.ACCEPTED,
+            OrderStatus.PARTIALLY_FILLED,
+        )
+
 
 @dataclass
 class Transaction:
