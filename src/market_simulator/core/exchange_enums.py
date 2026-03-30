@@ -40,3 +40,19 @@ class Action(StrEnum):
     SUBMIT = "SUBMIT"
     MODIFY = "MODIFY"
     CANCEL = "CANCEL"
+
+
+class RequestStatus(StrEnum):
+    """Status of an order message request.
+
+    Describes the outcome of a request, distinct from the order's
+    lifecycle status (OrderStatus).
+    """
+    ACCEPTED = "ACCEPTED"
+    FILLED = "FILLED"
+    MODIFIED = "MODIFIED"
+    MODIFIED_PRIORITY_RESET = "MODIFIED_PRIORITY_RESET"
+    CANCELLED = "CANCELLED"
+    REJECTED = "REJECTED"
+    ORDER_NOT_FOUND = "ORDER_NOT_FOUND"
+    ORDER_INACTIVE = "ORDER_INACTIVE"

@@ -5,10 +5,17 @@ from decimal import Decimal
 
 from market_simulator.core.clock import Clock
 from market_simulator.core.exchange_enums import (
+    Action,
     OrderStatus,
     OrderType,
     RejectionReason,
+    RequestStatus,
     Side,
+)
+from market_simulator.core.messages import (
+    OrderMessageRequest,
+    OrderMessageResponse,
+    RegistrationResponse,
 )
 from market_simulator.exchange.data import Order, Transaction
 from market_simulator.exchange.order_book import DepthLevel, OrderBook
@@ -40,6 +47,9 @@ class Exchange:
     The exchange validates incoming order messages, manages order books
     per instrument, and tracks registered participants. Matching and
     fee logic are added in a subsequent layer.
+
+    Public API uses OrderMessageRequest/OrderMessageResponse to mirror
+    the future proto-based network interface.
 
     Args:
         config: Exchange configuration.
@@ -77,47 +87,51 @@ class Exchange:
         """Whether the exchange is currently accepting orders."""
         return self._is_open
 
-    # -- Participant registration -------------------------------------------
+    # -- Public request handlers --------------------------------------------
 
-    def register_participant(self) -> int:
-        """Register a new participant and return their assigned ID."""
+    def handle_registration_request(self) -> RegistrationResponse:
+        """Register a new participant and return a RegistrationResponse."""
         pid = self._next_participant_id
         self._next_participant_id += 1
         self._participants.add(pid)
-        return pid
+        return RegistrationResponse(participant_id=pid)
+
+    def handle_order_message(
+        self, request: OrderMessageRequest,
+    ) -> OrderMessageResponse:
+        """Dispatch an order message request and return a response."""
+        if request.action == Action.SUBMIT:
+            return self._submit_order(request)
+        if request.action == Action.MODIFY:
+            return self._modify_order(request)
+        if request.action == Action.CANCEL:
+            return self._cancel_order(request)
+        return OrderMessageResponse(
+            request_status=RequestStatus.REJECTED,
+            rejection_reason=RejectionReason.UNSUPPORTED_ORDER_TYPE,
+        )
 
     # -- Order submission ---------------------------------------------------
 
-    def submit_order(
-        self,
-        participant_id: int,
-        instrument: str,
-        side: Side,
-        order_type: OrderType,
-        price: Decimal | None,
-        quantity: Decimal,
-    ) -> Order:
-        """Validate and submit an order. Returns the created Order.
-
-        The order is validated against exchange rules and either accepted
-        (added to the book) or rejected with a reason. Market order
-        matching and limit order crossing are handled separately.
-        """
+    def _submit_order(
+        self, request: OrderMessageRequest,
+    ) -> OrderMessageResponse:
+        """Validate and submit an order."""
         order_id = self._next_order_id
         self._next_order_id += 1
         timestamp = self._clock.now()
 
         order = Order(
             order_id=order_id,
-            participant_id=participant_id,
+            participant_id=request.participant_id,
             creation_timestamp=timestamp,
             last_modified_timestamp=timestamp,
-            instrument=instrument,
-            side=side,
-            order_type=order_type,
-            price=price,
-            quantity=quantity,
-            remaining_quantity=quantity,
+            instrument=request.instrument,
+            side=request.side,
+            order_type=request.order_type,
+            price=request.price,
+            quantity=request.quantity,
+            remaining_quantity=request.quantity,
             status=OrderStatus.ACCEPTED,
         )
 
@@ -125,14 +139,33 @@ class Exchange:
         if rejection is not None:
             order.status = OrderStatus.REJECTED
             order.rejection_reason = rejection
-            return order
+            return OrderMessageResponse(
+                request_status=RequestStatus.REJECTED,
+                order_id=order_id,
+                rejection_reason=rejection,
+            )
 
-        # Add limit orders to the book. Market orders will be matched
-        # in the matching engine layer; for now they are just accepted.
-        if order_type == OrderType.LIMIT:
-            self._order_books[instrument].add_order(order)
+        # Add limit orders to the book. Market orders are matched in the
+        # matching engine layer; for now they are rejected (no liquidity
+        # check yet, but market orders must always fill or reject).
+        if order.order_type == OrderType.LIMIT:
+            self._order_books[order.instrument].add_order(order)
+            return OrderMessageResponse(
+                request_status=RequestStatus.ACCEPTED,
+                order_id=order_id,
+            )
 
-        return order
+        # Market orders: matching not yet implemented. In this phase,
+        # market orders are always either filled or rejected — never
+        # resting. Matching PR will handle this; for now reject with
+        # NO_LIQUIDITY as a placeholder.
+        order.status = OrderStatus.REJECTED
+        order.rejection_reason = RejectionReason.NO_LIQUIDITY
+        return OrderMessageResponse(
+            request_status=RequestStatus.REJECTED,
+            order_id=order_id,
+            rejection_reason=RejectionReason.NO_LIQUIDITY,
+        )
 
     def _validate_order(self, order: Order) -> RejectionReason | None:
         """Return a rejection reason, or None if the order is valid."""
@@ -159,75 +192,90 @@ class Exchange:
 
     # -- Order modification -------------------------------------------------
 
-    def modify_order(
-        self,
-        participant_id: int,
-        order_id: int,
-        new_price: Decimal | None,
-        new_quantity: Decimal,
-    ) -> Order | None:
-        """Modify an existing order's price and/or quantity.
-
-        The quantity refers to the new total order quantity (not the
-        remaining). Modify semantics per the design doc:
-        - If new total <= already filled, remaining is set to 0 and
-          the order is marked FILLED.
-        - A price change or increase in remaining quantity loses time
-          priority.
-        - A decrease in remaining quantity modifies in place.
-
-        Returns the modified order, or None if the order was not found.
-        """
-        order = self._find_order(order_id)
+    def _modify_order(
+        self, request: OrderMessageRequest,
+    ) -> OrderMessageResponse:
+        """Modify an existing order's price and/or quantity."""
+        order = self._find_order(request.order_id)
         if order is None:
-            return None
+            return OrderMessageResponse(
+                request_status=RequestStatus.ORDER_NOT_FOUND,
+                order_id=request.order_id,
+            )
+
+        if not OrderBook._is_active(order):
+            return OrderMessageResponse(
+                request_status=RequestStatus.ORDER_INACTIVE,
+                order_id=request.order_id,
+            )
 
         timestamp = self._clock.now()
         order.last_modified_timestamp = timestamp
 
         filled = order.quantity - order.remaining_quantity
-        new_remaining = new_quantity - filled
+        new_remaining = request.quantity - filled
 
         # If new total <= filled, the order is fully filled.
         if new_remaining <= 0:
-            order.quantity = new_quantity
+            order.quantity = request.quantity
             order.remaining_quantity = Decimal("0")
             order.status = OrderStatus.FILLED
-            return order
+            return OrderMessageResponse(
+                request_status=RequestStatus.FILLED,
+                order_id=order.order_id,
+            )
 
         # Determine if time priority is lost.
-        price_changed = new_price is not None and new_price != order.price
+        price_changed = (
+            request.price is not None and request.price != order.price
+        )
         remaining_increased = new_remaining > order.remaining_quantity
         loses_priority = price_changed or remaining_increased
 
         book = self._order_books[order.instrument]
         book.modify_order(
-            order_id=order_id,
-            new_price=new_price,
-            new_quantity=new_quantity,
+            order_id=order.order_id,
+            new_price=request.price,
+            new_quantity=request.quantity,
             new_remaining=new_remaining,
             loses_priority=loses_priority,
         )
 
-        return order
+        status = (
+            RequestStatus.MODIFIED_PRIORITY_RESET
+            if loses_priority
+            else RequestStatus.MODIFIED
+        )
+        return OrderMessageResponse(
+            request_status=status,
+            order_id=order.order_id,
+        )
 
     # -- Order cancellation -------------------------------------------------
 
-    def cancel_order(
-        self,
-        participant_id: int,
-        order_id: int,
-    ) -> Order | None:
-        """Cancel an existing order.
-
-        Returns the cancelled order, or None if not found or not active.
-        """
-        order = self._find_order(order_id)
+    def _cancel_order(
+        self, request: OrderMessageRequest,
+    ) -> OrderMessageResponse:
+        """Cancel an existing order."""
+        order = self._find_order(request.order_id)
         if order is None:
-            return None
+            return OrderMessageResponse(
+                request_status=RequestStatus.ORDER_NOT_FOUND,
+                order_id=request.order_id,
+            )
+
+        if not OrderBook._is_active(order):
+            return OrderMessageResponse(
+                request_status=RequestStatus.ORDER_INACTIVE,
+                order_id=request.order_id,
+            )
 
         book = self._order_books[order.instrument]
-        return book.cancel_order(order_id)
+        book.cancel_order(request.order_id)
+        return OrderMessageResponse(
+            request_status=RequestStatus.CANCELLED,
+            order_id=request.order_id,
+        )
 
     # -- Query methods ------------------------------------------------------
 

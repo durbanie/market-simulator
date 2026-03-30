@@ -4,11 +4,17 @@
 
 - Add `Exchange` class in `exchange/exchange.py` with configurable instruments, fee bps, and starting IDs
 - Add `ExchangeConfig` dataclass for exchange constructor configuration
-- Implement `register_participant`, `open`/`close`, `submit_order`, `modify_order`, `cancel_order`
+- Unified request/response API mirroring future proto-based network interface:
+  - `handle_registration_request() -> RegistrationResponse`
+  - `handle_order_message(OrderMessageRequest) -> OrderMessageResponse`
+  - Submit, modify, and cancel are private to the exchange
+- Add `OrderMessageRequest`, `OrderMessageResponse`, `RegistrationResponse` dataclasses in `core/messages.py`
+- Add `RequestStatus` enum in `core/exchange_enums.py` (distinct from `OrderStatus`)
 - Full validation with rejection reasons: exchange closed, unregistered participant, unsupported instrument/order type, non-positive price/quantity
+- Market orders rejected with `NO_LIQUIDITY` (matching engine deferred to next PR)
 - Modify semantics per design doc: quantity decrease keeps priority, price change or quantity increase loses priority, new total <= filled marks FILLED
 - Query methods: `get_transactions`, `get_depth`, `get_order`
-- 37 unit tests at 99% coverage (matching and fees deferred to next PR)
+- Update `DESIGNDOC.md` with request/response architecture and rationale
 
 ## v1.1.4 — Order book
 

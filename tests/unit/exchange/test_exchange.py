@@ -4,11 +4,14 @@ from decimal import Decimal
 
 from market_simulator.core.clock import Clock, ClockMode
 from market_simulator.core.exchange_enums import (
+    Action,
     OrderStatus,
     OrderType,
     RejectionReason,
+    RequestStatus,
     Side,
 )
+from market_simulator.core.messages import OrderMessageRequest, OrderMessageResponse
 from market_simulator.exchange.exchange import Exchange, ExchangeConfig
 
 
@@ -25,6 +28,42 @@ def _make_exchange(
     )
     clock = Clock(mode=ClockMode.FAST_SIMULATION)
     return Exchange(config, clock)
+
+
+def _register(ex: Exchange) -> int:
+    """Register a participant and return their ID."""
+    return ex.handle_registration_request().participant_id
+
+
+def _submit_limit(
+    ex: Exchange, pid: int, instrument: str, side: Side,
+    price: Decimal, quantity: Decimal,
+) -> OrderMessageResponse:
+    """Submit a limit order and return the response."""
+    return ex.handle_order_message(OrderMessageRequest(
+        action=Action.SUBMIT,
+        participant_id=pid,
+        instrument=instrument,
+        side=side,
+        order_type=OrderType.LIMIT,
+        price=price,
+        quantity=quantity,
+    ))
+
+
+def _submit_market(
+    ex: Exchange, pid: int, instrument: str, side: Side,
+    quantity: Decimal,
+) -> OrderMessageResponse:
+    """Submit a market order and return the response."""
+    return ex.handle_order_message(OrderMessageRequest(
+        action=Action.SUBMIT,
+        participant_id=pid,
+        instrument=instrument,
+        side=side,
+        order_type=OrderType.MARKET,
+        quantity=quantity,
+    ))
 
 
 class TestOpenClose:
@@ -47,75 +86,90 @@ class TestOpenClose:
 class TestRegistration:
     def test_register_returns_incrementing_ids(self):
         ex = _make_exchange(starting_participant_id=100)
-        assert ex.register_participant() == 100
-        assert ex.register_participant() == 101
-        assert ex.register_participant() == 102
+        r1 = ex.handle_registration_request()
+        r2 = ex.handle_registration_request()
+        r3 = ex.handle_registration_request()
+        assert r1.participant_id == 100
+        assert r2.participant_id == 101
+        assert r3.participant_id == 102
 
 
 class TestSubmitOrder:
     def test_limit_buy_accepted(self):
         ex = _make_exchange()
         ex.open()
-        pid = ex.register_participant()
-        order = ex.submit_order(pid, "XYZ", Side.BUY, OrderType.LIMIT, Decimal("50.00"), Decimal("10"))
-        assert order.status == OrderStatus.ACCEPTED
-        assert order.order_id == 1
-        assert order.participant_id == pid
-        assert order.instrument == "XYZ"
-        assert order.side == Side.BUY
-        assert order.order_type == OrderType.LIMIT
-        assert order.price == Decimal("50.00")
-        assert order.quantity == Decimal("10")
-        assert order.remaining_quantity == Decimal("10")
-        assert order.rejection_reason is None
+        pid = _register(ex)
+        resp = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50.00"), Decimal("10"))
+        assert resp.request_status == RequestStatus.ACCEPTED
+        assert resp.order_id == 1
+        assert resp.rejection_reason is None
 
     def test_limit_sell_accepted(self):
         ex = _make_exchange()
         ex.open()
-        pid = ex.register_participant()
-        order = ex.submit_order(pid, "XYZ", Side.SELL, OrderType.LIMIT, Decimal("55.00"), Decimal("5"))
-        assert order.status == OrderStatus.ACCEPTED
+        pid = _register(ex)
+        resp = _submit_limit(ex, pid, "XYZ", Side.SELL, Decimal("55.00"), Decimal("5"))
+        assert resp.request_status == RequestStatus.ACCEPTED
 
-    def test_market_buy_accepted(self):
+    def test_market_order_rejected_no_liquidity(self):
         ex = _make_exchange()
         ex.open()
-        pid = ex.register_participant()
-        order = ex.submit_order(pid, "XYZ", Side.BUY, OrderType.MARKET, None, Decimal("10"))
-        assert order.status == OrderStatus.ACCEPTED
-        assert order.price is None
+        pid = _register(ex)
+        resp = _submit_market(ex, pid, "XYZ", Side.BUY, Decimal("10"))
+        assert resp.request_status == RequestStatus.REJECTED
+        assert resp.rejection_reason == RejectionReason.NO_LIQUIDITY
 
     def test_order_ids_increment(self):
         ex = _make_exchange(starting_order_id=100)
         ex.open()
-        pid = ex.register_participant()
-        o1 = ex.submit_order(pid, "XYZ", Side.BUY, OrderType.LIMIT, Decimal("50"), Decimal("10"))
-        o2 = ex.submit_order(pid, "XYZ", Side.SELL, OrderType.LIMIT, Decimal("55"), Decimal("10"))
-        assert o1.order_id == 100
-        assert o2.order_id == 101
+        pid = _register(ex)
+        r1 = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
+        r2 = _submit_limit(ex, pid, "XYZ", Side.SELL, Decimal("55"), Decimal("10"))
+        assert r1.order_id == 100
+        assert r2.order_id == 101
 
     def test_limit_order_appears_on_book(self):
         ex = _make_exchange()
         ex.open()
-        pid = ex.register_participant()
-        ex.submit_order(pid, "XYZ", Side.BUY, OrderType.LIMIT, Decimal("50.00"), Decimal("10"))
+        pid = _register(ex)
+        _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50.00"), Decimal("10"))
         depth = ex.get_depth("XYZ", 5)
         assert depth["bids"] == [(Decimal("50.00"), Decimal("10"))]
 
     def test_market_order_does_not_appear_on_book(self):
         ex = _make_exchange()
         ex.open()
-        pid = ex.register_participant()
-        ex.submit_order(pid, "XYZ", Side.BUY, OrderType.MARKET, None, Decimal("10"))
+        pid = _register(ex)
+        _submit_market(ex, pid, "XYZ", Side.BUY, Decimal("10"))
         depth = ex.get_depth("XYZ", 5)
         assert depth["bids"] == []
+
+    def test_accepted_order_retrievable_via_get_order(self):
+        ex = _make_exchange()
+        ex.open()
+        pid = _register(ex)
+        resp = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
+        order = ex.get_order(resp.order_id)
+        assert order is not None
+        assert order.order_id == resp.order_id
+        assert order.participant_id == pid
+        assert order.instrument == "XYZ"
+        assert order.side == Side.BUY
+        assert order.order_type == OrderType.LIMIT
+        assert order.price == Decimal("50")
+        assert order.quantity == Decimal("10")
+        assert order.remaining_quantity == Decimal("10")
+        assert order.status == OrderStatus.ACCEPTED
+        assert order.rejection_reason is None
 
     def test_timestamps_set_from_clock(self):
         config = ExchangeConfig(instruments=["XYZ"])
         clock = Clock(mode=ClockMode.FAST_SIMULATION, offset_us=5000000)
         ex = Exchange(config, clock)
         ex.open()
-        pid = ex.register_participant()
-        order = ex.submit_order(pid, "XYZ", Side.BUY, OrderType.LIMIT, Decimal("50"), Decimal("10"))
+        pid = ex.handle_registration_request().participant_id
+        resp = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
+        order = ex.get_order(resp.order_id)
         assert order.creation_timestamp == 5000000
         assert order.last_modified_timestamp == 5000000
 
@@ -123,186 +177,302 @@ class TestSubmitOrder:
 class TestRejections:
     def test_reject_exchange_closed(self):
         ex = _make_exchange()
-        pid = ex.register_participant()
-        order = ex.submit_order(pid, "XYZ", Side.BUY, OrderType.LIMIT, Decimal("50"), Decimal("10"))
-        assert order.status == OrderStatus.REJECTED
-        assert order.rejection_reason == RejectionReason.EXCHANGE_CLOSED
+        pid = _register(ex)
+        resp = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
+        assert resp.request_status == RequestStatus.REJECTED
+        assert resp.rejection_reason == RejectionReason.EXCHANGE_CLOSED
 
     def test_reject_unregistered_participant(self):
         ex = _make_exchange()
         ex.open()
-        order = ex.submit_order(999, "XYZ", Side.BUY, OrderType.LIMIT, Decimal("50"), Decimal("10"))
-        assert order.status == OrderStatus.REJECTED
-        assert order.rejection_reason == RejectionReason.UNREGISTERED_PARTICIPANT
+        resp = _submit_limit(ex, 999, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
+        assert resp.request_status == RequestStatus.REJECTED
+        assert resp.rejection_reason == RejectionReason.UNREGISTERED_PARTICIPANT
 
     def test_reject_unsupported_instrument(self):
         ex = _make_exchange(instruments=["XYZ"])
         ex.open()
-        pid = ex.register_participant()
-        order = ex.submit_order(pid, "ABC", Side.BUY, OrderType.LIMIT, Decimal("50"), Decimal("10"))
-        assert order.status == OrderStatus.REJECTED
-        assert order.rejection_reason == RejectionReason.UNSUPPORTED_INSTRUMENT
+        pid = _register(ex)
+        resp = _submit_limit(ex, pid, "ABC", Side.BUY, Decimal("50"), Decimal("10"))
+        assert resp.request_status == RequestStatus.REJECTED
+        assert resp.rejection_reason == RejectionReason.UNSUPPORTED_INSTRUMENT
 
     def test_reject_non_positive_price(self):
         ex = _make_exchange()
         ex.open()
-        pid = ex.register_participant()
-        order = ex.submit_order(pid, "XYZ", Side.BUY, OrderType.LIMIT, Decimal("0"), Decimal("10"))
-        assert order.status == OrderStatus.REJECTED
-        assert order.rejection_reason == RejectionReason.NON_POSITIVE_PRICE
+        pid = _register(ex)
+        resp = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("0"), Decimal("10"))
+        assert resp.request_status == RequestStatus.REJECTED
+        assert resp.rejection_reason == RejectionReason.NON_POSITIVE_PRICE
 
     def test_reject_negative_price(self):
         ex = _make_exchange()
         ex.open()
-        pid = ex.register_participant()
-        order = ex.submit_order(pid, "XYZ", Side.BUY, OrderType.LIMIT, Decimal("-1"), Decimal("10"))
-        assert order.status == OrderStatus.REJECTED
-        assert order.rejection_reason == RejectionReason.NON_POSITIVE_PRICE
+        pid = _register(ex)
+        resp = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("-1"), Decimal("10"))
+        assert resp.request_status == RequestStatus.REJECTED
+        assert resp.rejection_reason == RejectionReason.NON_POSITIVE_PRICE
 
     def test_reject_none_price_for_limit(self):
         ex = _make_exchange()
         ex.open()
-        pid = ex.register_participant()
-        order = ex.submit_order(pid, "XYZ", Side.BUY, OrderType.LIMIT, None, Decimal("10"))
-        assert order.status == OrderStatus.REJECTED
-        assert order.rejection_reason == RejectionReason.NON_POSITIVE_PRICE
+        pid = _register(ex)
+        resp = _submit_limit(ex, pid, "XYZ", Side.BUY, None, Decimal("10"))
+        assert resp.request_status == RequestStatus.REJECTED
+        assert resp.rejection_reason == RejectionReason.NON_POSITIVE_PRICE
 
     def test_reject_non_positive_quantity(self):
         ex = _make_exchange()
         ex.open()
-        pid = ex.register_participant()
-        order = ex.submit_order(pid, "XYZ", Side.BUY, OrderType.LIMIT, Decimal("50"), Decimal("0"))
-        assert order.status == OrderStatus.REJECTED
-        assert order.rejection_reason == RejectionReason.NON_POSITIVE_QUANTITY
+        pid = _register(ex)
+        resp = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("0"))
+        assert resp.request_status == RequestStatus.REJECTED
+        assert resp.rejection_reason == RejectionReason.NON_POSITIVE_QUANTITY
 
     def test_reject_negative_quantity(self):
         ex = _make_exchange()
         ex.open()
-        pid = ex.register_participant()
-        order = ex.submit_order(pid, "XYZ", Side.BUY, OrderType.LIMIT, Decimal("50"), Decimal("-5"))
-        assert order.status == OrderStatus.REJECTED
-        assert order.rejection_reason == RejectionReason.NON_POSITIVE_QUANTITY
+        pid = _register(ex)
+        resp = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("-5"))
+        assert resp.request_status == RequestStatus.REJECTED
+        assert resp.rejection_reason == RejectionReason.NON_POSITIVE_QUANTITY
 
     def test_rejected_order_not_on_book(self):
         ex = _make_exchange()
         # Exchange is closed, so order is rejected.
-        pid = ex.register_participant()
-        ex.submit_order(pid, "XYZ", Side.BUY, OrderType.LIMIT, Decimal("50"), Decimal("10"))
+        pid = _register(ex)
+        _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
         ex.open()
         depth = ex.get_depth("XYZ", 5)
         assert depth["bids"] == []
 
     def test_rejected_order_still_gets_order_id(self):
         ex = _make_exchange(starting_order_id=100)
-        pid = ex.register_participant()
-        order = ex.submit_order(pid, "XYZ", Side.BUY, OrderType.LIMIT, Decimal("50"), Decimal("10"))
-        assert order.order_id == 100
-        assert order.status == OrderStatus.REJECTED
+        pid = _register(ex)
+        resp = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
+        assert resp.order_id == 100
+        assert resp.request_status == RequestStatus.REJECTED
+
+    def test_unsupported_action_rejected(self):
+        """Unknown action values fall through to unsupported rejection."""
+        ex = _make_exchange()
+        ex.open()
+        pid = _register(ex)
+        # Construct a request with a mocked action that doesn't match any.
+        request = OrderMessageRequest(
+            action=Action.SUBMIT,
+            participant_id=pid,
+            instrument="XYZ",
+            side=Side.BUY,
+            order_type=OrderType.LIMIT,
+            price=Decimal("50"),
+            quantity=Decimal("10"),
+        )
+        # Manually override action to test the fallthrough branch.
+        request.action = "UNKNOWN"
+        resp = ex.handle_order_message(request)
+        assert resp.request_status == RequestStatus.REJECTED
+        assert resp.rejection_reason == RejectionReason.UNSUPPORTED_ORDER_TYPE
 
 
 class TestModifyOrder:
     def test_modify_quantity_down_keeps_priority(self):
         ex = _make_exchange()
         ex.open()
-        pid = ex.register_participant()
-        o1 = ex.submit_order(pid, "XYZ", Side.BUY, OrderType.LIMIT, Decimal("50"), Decimal("100"))
-        o2 = ex.submit_order(pid, "XYZ", Side.BUY, OrderType.LIMIT, Decimal("50"), Decimal("100"))
-        ex.modify_order(pid, o1.order_id, new_price=None, new_quantity=Decimal("80"))
-        # o1 still at front (priority maintained).
+        pid = _register(ex)
+        r1 = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("100"))
+        _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("100"))
+        resp = ex.handle_order_message(OrderMessageRequest(
+            action=Action.MODIFY,
+            participant_id=pid,
+            order_id=r1.order_id,
+            quantity=Decimal("80"),
+        ))
+        assert resp.request_status == RequestStatus.MODIFIED
+        # Total depth should be 80 + 100 = 180 at $50.
         depth = ex.get_depth("XYZ", 5)
         assert depth["bids"] == [(Decimal("50"), Decimal("180"))]
-        assert o1.remaining_quantity == Decimal("80")
+        order = ex.get_order(r1.order_id)
+        assert order.remaining_quantity == Decimal("80")
 
     def test_modify_quantity_up_loses_priority(self):
         ex = _make_exchange()
         ex.open()
-        pid = ex.register_participant()
-        o1 = ex.submit_order(pid, "XYZ", Side.BUY, OrderType.LIMIT, Decimal("50"), Decimal("100"))
-        o2 = ex.submit_order(pid, "XYZ", Side.BUY, OrderType.LIMIT, Decimal("50"), Decimal("100"))
-        ex.modify_order(pid, o1.order_id, new_price=None, new_quantity=Decimal("150"))
-        # o2 should now be at the front.
-        book = ex._order_books["XYZ"]
-        assert book.peek_best_bid() is o2
+        pid = _register(ex)
+        r1 = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("100"))
+        _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("100"))
+        resp = ex.handle_order_message(OrderMessageRequest(
+            action=Action.MODIFY,
+            participant_id=pid,
+            order_id=r1.order_id,
+            quantity=Decimal("150"),
+        ))
+        assert resp.request_status == RequestStatus.MODIFIED_PRIORITY_RESET
+        # Total depth should be 150 + 100 = 250 at $50.
+        depth = ex.get_depth("XYZ", 5)
+        assert depth["bids"] == [(Decimal("50"), Decimal("250"))]
 
     def test_modify_price_change_loses_priority(self):
         ex = _make_exchange()
         ex.open()
-        pid = ex.register_participant()
-        o1 = ex.submit_order(pid, "XYZ", Side.BUY, OrderType.LIMIT, Decimal("50"), Decimal("100"))
-        o2 = ex.submit_order(pid, "XYZ", Side.BUY, OrderType.LIMIT, Decimal("50"), Decimal("100"))
-        ex.modify_order(pid, o1.order_id, new_price=Decimal("49"), new_quantity=Decimal("100"))
-        # Price changed — loses priority at new level.
-        book = ex._order_books["XYZ"]
-        assert book.peek_best_bid() is o2
-        assert o1.price == Decimal("49")
+        pid = _register(ex)
+        r1 = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("100"))
+        _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("100"))
+        resp = ex.handle_order_message(OrderMessageRequest(
+            action=Action.MODIFY,
+            participant_id=pid,
+            order_id=r1.order_id,
+            price=Decimal("49"),
+            quantity=Decimal("100"),
+        ))
+        assert resp.request_status == RequestStatus.MODIFIED_PRIORITY_RESET
+        order = ex.get_order(r1.order_id)
+        assert order.price == Decimal("49")
+        # Two price levels: $50 (100) and $49 (100).
+        depth = ex.get_depth("XYZ", 5)
+        assert depth["bids"] == [
+            (Decimal("50"), Decimal("100")),
+            (Decimal("49"), Decimal("100")),
+        ]
 
     def test_modify_same_price_keeps_priority(self):
         ex = _make_exchange()
         ex.open()
-        pid = ex.register_participant()
-        o1 = ex.submit_order(pid, "XYZ", Side.BUY, OrderType.LIMIT, Decimal("50"), Decimal("100"))
-        o2 = ex.submit_order(pid, "XYZ", Side.BUY, OrderType.LIMIT, Decimal("50"), Decimal("100"))
-        ex.modify_order(pid, o1.order_id, new_price=None, new_quantity=Decimal("100"))
-        # No price change, no quantity change — keeps priority.
-        book = ex._order_books["XYZ"]
-        assert book.peek_best_bid() is o1
+        pid = _register(ex)
+        r1 = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("100"))
+        _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("100"))
+        resp = ex.handle_order_message(OrderMessageRequest(
+            action=Action.MODIFY,
+            participant_id=pid,
+            order_id=r1.order_id,
+            quantity=Decimal("100"),
+        ))
+        assert resp.request_status == RequestStatus.MODIFIED
 
     def test_modify_to_filled_when_new_total_lte_filled(self):
         ex = _make_exchange()
         ex.open()
-        pid = ex.register_participant()
-        o = ex.submit_order(pid, "XYZ", Side.BUY, OrderType.LIMIT, Decimal("50"), Decimal("100"))
+        pid = _register(ex)
+        r = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("100"))
         # Simulate partial fill: 60 of 100 filled.
-        o.status = OrderStatus.PARTIALLY_FILLED
-        o.remaining_quantity = Decimal("40")
-        result = ex.modify_order(pid, o.order_id, new_price=None, new_quantity=Decimal("60"))
-        assert result is o
-        assert o.status == OrderStatus.FILLED
-        assert o.remaining_quantity == Decimal("0")
-        assert o.quantity == Decimal("60")
+        order = ex.get_order(r.order_id)
+        order.status = OrderStatus.PARTIALLY_FILLED
+        order.remaining_quantity = Decimal("40")
+        resp = ex.handle_order_message(OrderMessageRequest(
+            action=Action.MODIFY,
+            participant_id=pid,
+            order_id=r.order_id,
+            quantity=Decimal("60"),
+        ))
+        assert resp.request_status == RequestStatus.FILLED
+        assert order.status == OrderStatus.FILLED
+        assert order.remaining_quantity == Decimal("0")
+        assert order.quantity == Decimal("60")
 
     def test_modify_updates_timestamp(self):
         config = ExchangeConfig(instruments=["XYZ"])
         clock = Clock(mode=ClockMode.FAST_SIMULATION, offset_us=1000)
         ex = Exchange(config, clock)
         ex.open()
-        pid = ex.register_participant()
-        o = ex.submit_order(pid, "XYZ", Side.BUY, OrderType.LIMIT, Decimal("50"), Decimal("100"))
+        pid = ex.handle_registration_request().participant_id
+        r = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("100"))
         clock.advance(5000)
-        ex.modify_order(pid, o.order_id, new_price=None, new_quantity=Decimal("80"))
-        assert o.last_modified_timestamp == 6000
+        ex.handle_order_message(OrderMessageRequest(
+            action=Action.MODIFY,
+            participant_id=pid,
+            order_id=r.order_id,
+            quantity=Decimal("80"),
+        ))
+        order = ex.get_order(r.order_id)
+        assert order.last_modified_timestamp == 6000
 
-    def test_modify_nonexistent_returns_none(self):
+    def test_modify_nonexistent_returns_not_found(self):
         ex = _make_exchange()
         ex.open()
-        pid = ex.register_participant()
-        assert ex.modify_order(pid, 999, new_price=None, new_quantity=Decimal("50")) is None
+        pid = _register(ex)
+        resp = ex.handle_order_message(OrderMessageRequest(
+            action=Action.MODIFY,
+            participant_id=pid,
+            order_id=999,
+            quantity=Decimal("50"),
+        ))
+        assert resp.request_status == RequestStatus.ORDER_NOT_FOUND
+
+    def test_modify_inactive_order(self):
+        ex = _make_exchange()
+        ex.open()
+        pid = _register(ex)
+        r = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
+        # Cancel first, then try to modify.
+        ex.handle_order_message(OrderMessageRequest(
+            action=Action.CANCEL,
+            participant_id=pid,
+            order_id=r.order_id,
+        ))
+        resp = ex.handle_order_message(OrderMessageRequest(
+            action=Action.MODIFY,
+            participant_id=pid,
+            order_id=r.order_id,
+            quantity=Decimal("20"),
+        ))
+        assert resp.request_status == RequestStatus.ORDER_INACTIVE
 
 
 class TestCancelOrder:
     def test_cancel_active_order(self):
         ex = _make_exchange()
         ex.open()
-        pid = ex.register_participant()
-        o = ex.submit_order(pid, "XYZ", Side.BUY, OrderType.LIMIT, Decimal("50"), Decimal("10"))
-        result = ex.cancel_order(pid, o.order_id)
-        assert result is o
-        assert o.status == OrderStatus.CANCELLED
+        pid = _register(ex)
+        r = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
+        resp = ex.handle_order_message(OrderMessageRequest(
+            action=Action.CANCEL,
+            participant_id=pid,
+            order_id=r.order_id,
+        ))
+        assert resp.request_status == RequestStatus.CANCELLED
+        order = ex.get_order(r.order_id)
+        assert order.status == OrderStatus.CANCELLED
 
     def test_cancel_removes_from_depth(self):
         ex = _make_exchange()
         ex.open()
-        pid = ex.register_participant()
-        o = ex.submit_order(pid, "XYZ", Side.BUY, OrderType.LIMIT, Decimal("50"), Decimal("10"))
-        ex.cancel_order(pid, o.order_id)
+        pid = _register(ex)
+        r = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
+        ex.handle_order_message(OrderMessageRequest(
+            action=Action.CANCEL,
+            participant_id=pid,
+            order_id=r.order_id,
+        ))
         depth = ex.get_depth("XYZ", 5)
         assert depth["bids"] == []
 
-    def test_cancel_nonexistent_returns_none(self):
+    def test_cancel_nonexistent_returns_not_found(self):
         ex = _make_exchange()
         ex.open()
-        pid = ex.register_participant()
-        assert ex.cancel_order(pid, 999) is None
+        pid = _register(ex)
+        resp = ex.handle_order_message(OrderMessageRequest(
+            action=Action.CANCEL,
+            participant_id=pid,
+            order_id=999,
+        ))
+        assert resp.request_status == RequestStatus.ORDER_NOT_FOUND
+
+    def test_cancel_already_cancelled_returns_inactive(self):
+        ex = _make_exchange()
+        ex.open()
+        pid = _register(ex)
+        r = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
+        ex.handle_order_message(OrderMessageRequest(
+            action=Action.CANCEL,
+            participant_id=pid,
+            order_id=r.order_id,
+        ))
+        resp = ex.handle_order_message(OrderMessageRequest(
+            action=Action.CANCEL,
+            participant_id=pid,
+            order_id=r.order_id,
+        ))
+        assert resp.request_status == RequestStatus.ORDER_INACTIVE
 
 
 class TestQueryMethods:
@@ -317,9 +487,9 @@ class TestQueryMethods:
     def test_get_depth_multiple_instruments(self):
         ex = _make_exchange(instruments=["XYZ", "ABC"])
         ex.open()
-        pid = ex.register_participant()
-        ex.submit_order(pid, "XYZ", Side.BUY, OrderType.LIMIT, Decimal("50"), Decimal("10"))
-        ex.submit_order(pid, "ABC", Side.SELL, OrderType.LIMIT, Decimal("25"), Decimal("5"))
+        pid = _register(ex)
+        _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
+        _submit_limit(ex, pid, "ABC", Side.SELL, Decimal("25"), Decimal("5"))
         xyz_depth = ex.get_depth("XYZ", 5)
         abc_depth = ex.get_depth("ABC", 5)
         assert xyz_depth["bids"] == [(Decimal("50"), Decimal("10"))]
@@ -328,9 +498,11 @@ class TestQueryMethods:
     def test_get_order(self):
         ex = _make_exchange()
         ex.open()
-        pid = ex.register_participant()
-        o = ex.submit_order(pid, "XYZ", Side.BUY, OrderType.LIMIT, Decimal("50"), Decimal("10"))
-        assert ex.get_order(o.order_id) is o
+        pid = _register(ex)
+        resp = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
+        order = ex.get_order(resp.order_id)
+        assert order is not None
+        assert order.order_id == resp.order_id
 
     def test_get_order_not_found(self):
         ex = _make_exchange()
@@ -341,9 +513,9 @@ class TestMultipleInstruments:
     def test_orders_go_to_correct_book(self):
         ex = _make_exchange(instruments=["XYZ", "ABC"])
         ex.open()
-        pid = ex.register_participant()
-        ex.submit_order(pid, "XYZ", Side.BUY, OrderType.LIMIT, Decimal("50"), Decimal("10"))
-        ex.submit_order(pid, "ABC", Side.BUY, OrderType.LIMIT, Decimal("25"), Decimal("20"))
+        pid = _register(ex)
+        _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
+        _submit_limit(ex, pid, "ABC", Side.BUY, Decimal("25"), Decimal("20"))
         xyz = ex.get_depth("XYZ", 5)
         abc = ex.get_depth("ABC", 5)
         assert len(xyz["bids"]) == 1
