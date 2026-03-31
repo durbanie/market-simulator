@@ -33,6 +33,13 @@ class RejectionReason(StrEnum):
     NON_POSITIVE_QUANTITY = "NON_POSITIVE_QUANTITY"
     EXCHANGE_CLOSED = "EXCHANGE_CLOSED"
     NO_LIQUIDITY = "NO_LIQUIDITY"
+    UNAUTHORIZED_PARTICIPANT = "UNAUTHORIZED_PARTICIPANT"
+
+
+class ExchangeState(StrEnum):
+    """Exchange operational state."""
+    OPEN = "OPEN"
+    CLOSED = "CLOSED"
 
 
 class Action(StrEnum):
@@ -40,3 +47,20 @@ class Action(StrEnum):
     SUBMIT = "SUBMIT"
     MODIFY = "MODIFY"
     CANCEL = "CANCEL"
+
+
+class RequestStatus(StrEnum):
+    """Status of an order message request.
+
+    Describes the outcome of a request, distinct from the order's
+    lifecycle status (OrderStatus).
+    """
+    ACCEPTED = "ACCEPTED"
+    FILLED = "FILLED"
+    MODIFIED = "MODIFIED"
+    MODIFIED_PRIORITY_RESET = "MODIFIED_PRIORITY_RESET"
+    CANCELLED = "CANCELLED"
+    REJECTED = "REJECTED"
+    ORDER_NOT_FOUND = "ORDER_NOT_FOUND"
+    ORDER_INACTIVE = "ORDER_INACTIVE"
+    INTERNAL_ERROR = "INTERNAL_ERROR"
