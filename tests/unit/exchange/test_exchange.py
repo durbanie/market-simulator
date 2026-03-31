@@ -380,7 +380,8 @@ class TestModifyOrder:
         assert resp.remaining_quantity == Decimal("80")
         assert resp.filled_quantity == Decimal("0")
 
-    def test_modify_to_filled_reports_filled_quantity(self):
+    def test_modify_to_filled_equal_to_filled(self):
+        """Modify total to exactly the filled amount marks FILLED."""
         ex = _make_exchange()
         ex.open()
         pid = _register(ex)
@@ -398,26 +399,31 @@ class TestModifyOrder:
         assert resp.request_status == RequestStatus.FILLED
         assert resp.filled_quantity == Decimal("60")
         assert resp.remaining_quantity == Decimal("0")
+        assert resp.quantity == Decimal("60")
+        assert order.status == OrderStatus.FILLED
 
-    def test_modify_to_filled_when_new_total_lte_filled(self):
+    def test_modify_to_filled_less_than_filled(self):
+        """Modify total to less than filled amount marks FILLED with actual filled qty."""
         ex = _make_exchange()
         ex.open()
         pid = _register(ex)
         r = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("100"))
-        # Simulate partial fill: 60 of 100 filled.
+        # Simulate partial fill: 80 of 100 filled.
         order = ex.get_order(r.order_id)
         order.status = OrderStatus.PARTIALLY_FILLED
-        order.remaining_quantity = Decimal("40")
+        order.remaining_quantity = Decimal("20")
         resp = ex.handle_order_message(OrderMessageRequest(
             action=Action.MODIFY,
             participant_id=pid,
             order_id=r.order_id,
-            quantity=Decimal("60"),
+            quantity=Decimal("50"),
         ))
         assert resp.request_status == RequestStatus.FILLED
+        # Filled quantity reflects actual fills (80), not the requested total (50).
+        assert resp.filled_quantity == Decimal("80")
+        assert resp.remaining_quantity == Decimal("0")
+        assert resp.quantity == Decimal("80")
         assert order.status == OrderStatus.FILLED
-        assert order.remaining_quantity == Decimal("0")
-        assert order.quantity == Decimal("60")
 
     def test_modify_updates_timestamp(self):
         config = ExchangeConfig(instruments=["XYZ"])

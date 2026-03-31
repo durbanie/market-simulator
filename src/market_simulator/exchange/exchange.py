@@ -114,6 +114,72 @@ class Exchange:
             rejection_reason=RejectionReason.UNSUPPORTED_ORDER_TYPE,
         )
 
+    # -- Shared validation ----------------------------------------------------
+
+    def _validate_request(
+        self, request: OrderMessageRequest,
+    ) -> RejectionReason | None:
+        """Validate request-level fields common to all actions.
+
+        Checks exchange state and participant registration.
+        """
+        if not self.is_open:
+            return RejectionReason.EXCHANGE_CLOSED
+        if request.participant_id not in self._participants:
+            return RejectionReason.UNREGISTERED_PARTICIPANT
+        return None
+
+    def _validate_submit_fields(
+        self, order: Order,
+    ) -> RejectionReason | None:
+        """Validate submit-specific fields on a newly created order."""
+        if order.instrument not in self._order_books:
+            return RejectionReason.UNSUPPORTED_INSTRUMENT
+
+        if order.order_type not in (OrderType.MARKET, OrderType.LIMIT):
+            return RejectionReason.UNSUPPORTED_ORDER_TYPE
+
+        if order.quantity <= 0:
+            return RejectionReason.NON_POSITIVE_QUANTITY
+
+        if order.order_type == OrderType.LIMIT:
+            if order.price is None or order.price <= 0:
+                return RejectionReason.NON_POSITIVE_PRICE
+
+        return None
+
+    def _find_and_validate_order(
+        self, request: OrderMessageRequest,
+    ) -> OrderMessageResponse | Order:
+        """Find the target order and validate order-level fields.
+
+        Checks order existence, participant ownership, and order
+        activity. Returns the Order on success, or an
+        OrderMessageResponse on failure.
+
+        Must be called after _validate_request.
+        """
+        order = self._find_order(request.order_id, request.instrument)
+        if order is None:
+            return OrderMessageResponse(
+                request_status=RequestStatus.ORDER_NOT_FOUND,
+                order_id=request.order_id,
+            )
+
+        if request.participant_id != order.participant_id:
+            return OrderMessageResponse(
+                request_status=RequestStatus.REJECTED,
+                order_id=request.order_id,
+                rejection_reason=RejectionReason.UNAUTHORIZED_PARTICIPANT,
+            )
+
+        if not order.is_active:
+            return self._order_response(
+                RequestStatus.ORDER_INACTIVE, order,
+            )
+
+        return order
+
     # -- Order submission ---------------------------------------------------
 
     def _submit_order(
@@ -138,12 +204,22 @@ class Exchange:
             status=OrderStatus.ACCEPTED,
         )
 
-        rejection = self._validate_order(order)
-        if rejection is not None:
+        # Request-level validation (exchange open, participant registered).
+        request_rejection = self._validate_request(request)
+        if request_rejection is not None:
             order.status = OrderStatus.REJECTED
-            order.rejection_reason = rejection
+            order.rejection_reason = request_rejection
             return self._order_response(
-                RequestStatus.REJECTED, order, rejection,
+                RequestStatus.REJECTED, order, request_rejection,
+            )
+
+        # Submit-specific validation (instrument, order type, quantity, price).
+        submit_rejection = self._validate_submit_fields(order)
+        if submit_rejection is not None:
+            order.status = OrderStatus.REJECTED
+            order.rejection_reason = submit_rejection
+            return self._order_response(
+                RequestStatus.REJECTED, order, submit_rejection,
             )
 
         # Add limit orders to the book.
@@ -160,82 +236,21 @@ class Exchange:
             RequestStatus.REJECTED, order, RejectionReason.NO_LIQUIDITY,
         )
 
-    def _validate_order(self, order: Order) -> RejectionReason | None:
-        """Return a rejection reason, or None if the order is valid."""
-        if not self.is_open:
-            return RejectionReason.EXCHANGE_CLOSED
-
-        if order.participant_id not in self._participants:
-            return RejectionReason.UNREGISTERED_PARTICIPANT
-
-        if order.instrument not in self._order_books:
-            return RejectionReason.UNSUPPORTED_INSTRUMENT
-
-        if order.order_type not in (OrderType.MARKET, OrderType.LIMIT):
-            return RejectionReason.UNSUPPORTED_ORDER_TYPE
-
-        if order.quantity <= 0:
-            return RejectionReason.NON_POSITIVE_QUANTITY
-
-        if order.order_type == OrderType.LIMIT:
-            if order.price is None or order.price <= 0:
-                return RejectionReason.NON_POSITIVE_PRICE
-
-        return None
-
-    # -- Shared validation for modify / cancel --------------------------------
-
-    def _validate_and_find_order(
-        self, request: OrderMessageRequest,
-    ) -> OrderMessageResponse | Order:
-        """Validate request context and find the target order.
-
-        Checks exchange state, participant registration, participant
-        ownership, and order existence/activity. Returns the Order on
-        success, or an OrderMessageResponse on failure.
-        """
-        if not self.is_open:
-            return OrderMessageResponse(
-                request_status=RequestStatus.REJECTED,
-                order_id=request.order_id,
-                rejection_reason=RejectionReason.EXCHANGE_CLOSED,
-            )
-
-        if request.participant_id not in self._participants:
-            return OrderMessageResponse(
-                request_status=RequestStatus.REJECTED,
-                order_id=request.order_id,
-                rejection_reason=RejectionReason.UNREGISTERED_PARTICIPANT,
-            )
-
-        order = self._find_order(request.order_id, request.instrument)
-        if order is None:
-            return OrderMessageResponse(
-                request_status=RequestStatus.ORDER_NOT_FOUND,
-                order_id=request.order_id,
-            )
-
-        if request.participant_id != order.participant_id:
-            return OrderMessageResponse(
-                request_status=RequestStatus.REJECTED,
-                order_id=request.order_id,
-                rejection_reason=RejectionReason.UNAUTHORIZED_PARTICIPANT,
-            )
-
-        if not order.is_active:
-            return self._order_response(
-                RequestStatus.ORDER_INACTIVE, order,
-            )
-
-        return order
-
     # -- Order modification -------------------------------------------------
 
     def _modify_order(
         self, request: OrderMessageRequest,
     ) -> OrderMessageResponse:
         """Modify an existing order's price and/or quantity."""
-        result = self._validate_and_find_order(request)
+        request_rejection = self._validate_request(request)
+        if request_rejection is not None:
+            return OrderMessageResponse(
+                request_status=RequestStatus.REJECTED,
+                order_id=request.order_id,
+                rejection_reason=request_rejection,
+            )
+
+        result = self._find_and_validate_order(request)
         if isinstance(result, OrderMessageResponse):
             return result
         order = result
@@ -246,9 +261,10 @@ class Exchange:
         filled_quantity = order.quantity - order.remaining_quantity
         new_remaining = request.quantity - filled_quantity
 
-        # If new total <= filled, the order is fully filled.
+        # If new total <= filled, the order is fully filled. Set quantity
+        # to the actual filled amount so filled_quantity is accurate.
         if new_remaining <= 0:
-            order.quantity = request.quantity
+            order.quantity = filled_quantity
             order.remaining_quantity = Decimal("0")
             order.status = OrderStatus.FILLED
             return self._order_response(RequestStatus.FILLED, order)
@@ -282,7 +298,15 @@ class Exchange:
         self, request: OrderMessageRequest,
     ) -> OrderMessageResponse:
         """Cancel an existing order."""
-        result = self._validate_and_find_order(request)
+        request_rejection = self._validate_request(request)
+        if request_rejection is not None:
+            return OrderMessageResponse(
+                request_status=RequestStatus.REJECTED,
+                order_id=request.order_id,
+                rejection_reason=request_rejection,
+            )
+
+        result = self._find_and_validate_order(request)
         if isinstance(result, OrderMessageResponse):
             return result
         order = result
