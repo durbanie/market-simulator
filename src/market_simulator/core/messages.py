@@ -56,6 +56,7 @@ class OrderMessageResponse:
         price: Current limit price, or None for market orders.
         quantity: Current total order quantity.
         remaining_quantity: Quantity not yet filled.
+        filled_quantity: Quantity already filled.
         creation_timestamp: When the order was created (microseconds).
         last_modified_timestamp: When the order was last modified.
     """
@@ -69,6 +70,7 @@ class OrderMessageResponse:
     price: Decimal | None = None
     quantity: Decimal | None = None
     remaining_quantity: Decimal | None = None
+    filled_quantity: Decimal | None = None
     creation_timestamp: int | None = None
     last_modified_timestamp: int | None = None
 

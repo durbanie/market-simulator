@@ -378,6 +378,26 @@ class TestModifyOrder:
         assert resp.price == Decimal("50")
         assert resp.quantity == Decimal("80")
         assert resp.remaining_quantity == Decimal("80")
+        assert resp.filled_quantity == Decimal("0")
+
+    def test_modify_to_filled_reports_filled_quantity(self):
+        ex = _make_exchange()
+        ex.open()
+        pid = _register(ex)
+        r = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("100"))
+        # Simulate partial fill: 60 of 100 filled.
+        order = ex.get_order(r.order_id)
+        order.status = OrderStatus.PARTIALLY_FILLED
+        order.remaining_quantity = Decimal("40")
+        resp = ex.handle_order_message(OrderMessageRequest(
+            action=Action.MODIFY,
+            participant_id=pid,
+            order_id=r.order_id,
+            quantity=Decimal("60"),
+        ))
+        assert resp.request_status == RequestStatus.FILLED
+        assert resp.filled_quantity == Decimal("60")
+        assert resp.remaining_quantity == Decimal("0")
 
     def test_modify_to_filled_when_new_total_lte_filled(self):
         ex = _make_exchange()
@@ -416,6 +436,50 @@ class TestModifyOrder:
         order = ex.get_order(r.order_id)
         assert order.last_modified_timestamp == 6000
 
+    def test_modify_exchange_closed(self):
+        ex = _make_exchange()
+        ex.open()
+        pid = _register(ex)
+        r = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
+        ex.close()
+        resp = ex.handle_order_message(OrderMessageRequest(
+            action=Action.MODIFY,
+            participant_id=pid,
+            order_id=r.order_id,
+            quantity=Decimal("5"),
+        ))
+        assert resp.request_status == RequestStatus.REJECTED
+        assert resp.rejection_reason == RejectionReason.EXCHANGE_CLOSED
+
+    def test_modify_unregistered_participant(self):
+        ex = _make_exchange()
+        ex.open()
+        pid = _register(ex)
+        r = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
+        resp = ex.handle_order_message(OrderMessageRequest(
+            action=Action.MODIFY,
+            participant_id=999,
+            order_id=r.order_id,
+            quantity=Decimal("5"),
+        ))
+        assert resp.request_status == RequestStatus.REJECTED
+        assert resp.rejection_reason == RejectionReason.UNREGISTERED_PARTICIPANT
+
+    def test_modify_unauthorized_participant(self):
+        ex = _make_exchange()
+        ex.open()
+        pid1 = _register(ex)
+        pid2 = _register(ex)
+        r = _submit_limit(ex, pid1, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
+        resp = ex.handle_order_message(OrderMessageRequest(
+            action=Action.MODIFY,
+            participant_id=pid2,
+            order_id=r.order_id,
+            quantity=Decimal("5"),
+        ))
+        assert resp.request_status == RequestStatus.REJECTED
+        assert resp.rejection_reason == RejectionReason.UNAUTHORIZED_PARTICIPANT
+
     def test_modify_nonexistent_returns_not_found(self):
         ex = _make_exchange()
         ex.open()
@@ -446,6 +510,9 @@ class TestModifyOrder:
             quantity=Decimal("20"),
         ))
         assert resp.request_status == RequestStatus.ORDER_INACTIVE
+        # Response includes order fields so client can inspect why.
+        assert resp.order_status == OrderStatus.CANCELLED
+        assert resp.instrument == "XYZ"
 
 
 class TestCancelOrder:
@@ -478,6 +545,64 @@ class TestCancelOrder:
         depth = ex.get_depth("XYZ", 5)
         assert depth["bids"] == []
 
+    def test_cancel_updates_timestamp(self):
+        config = ExchangeConfig(instruments=["XYZ"])
+        clock = Clock(mode=ClockMode.FAST_SIMULATION, offset_us=1000)
+        ex = Exchange(config, clock)
+        ex.open()
+        pid = ex.handle_registration_request().participant_id
+        r = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
+        clock.advance(5000)
+        resp = ex.handle_order_message(OrderMessageRequest(
+            action=Action.CANCEL,
+            participant_id=pid,
+            order_id=r.order_id,
+        ))
+        assert resp.last_modified_timestamp == 6000
+        order = ex.get_order(r.order_id)
+        assert order.last_modified_timestamp == 6000
+
+    def test_cancel_exchange_closed(self):
+        ex = _make_exchange()
+        ex.open()
+        pid = _register(ex)
+        r = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
+        ex.close()
+        resp = ex.handle_order_message(OrderMessageRequest(
+            action=Action.CANCEL,
+            participant_id=pid,
+            order_id=r.order_id,
+        ))
+        assert resp.request_status == RequestStatus.REJECTED
+        assert resp.rejection_reason == RejectionReason.EXCHANGE_CLOSED
+
+    def test_cancel_unregistered_participant(self):
+        ex = _make_exchange()
+        ex.open()
+        pid = _register(ex)
+        r = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
+        resp = ex.handle_order_message(OrderMessageRequest(
+            action=Action.CANCEL,
+            participant_id=999,
+            order_id=r.order_id,
+        ))
+        assert resp.request_status == RequestStatus.REJECTED
+        assert resp.rejection_reason == RejectionReason.UNREGISTERED_PARTICIPANT
+
+    def test_cancel_unauthorized_participant(self):
+        ex = _make_exchange()
+        ex.open()
+        pid1 = _register(ex)
+        pid2 = _register(ex)
+        r = _submit_limit(ex, pid1, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
+        resp = ex.handle_order_message(OrderMessageRequest(
+            action=Action.CANCEL,
+            participant_id=pid2,
+            order_id=r.order_id,
+        ))
+        assert resp.request_status == RequestStatus.REJECTED
+        assert resp.rejection_reason == RejectionReason.UNAUTHORIZED_PARTICIPANT
+
     def test_cancel_nonexistent_returns_not_found(self):
         ex = _make_exchange()
         ex.open()
@@ -505,6 +630,7 @@ class TestCancelOrder:
             order_id=r.order_id,
         ))
         assert resp.request_status == RequestStatus.ORDER_INACTIVE
+        assert resp.order_status == OrderStatus.CANCELLED
 
 
 class TestQueryMethods:

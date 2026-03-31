@@ -183,30 +183,68 @@ class Exchange:
 
         return None
 
-    # -- Order modification -------------------------------------------------
+    # -- Shared validation for modify / cancel --------------------------------
 
-    def _modify_order(
+    def _validate_and_find_order(
         self, request: OrderMessageRequest,
-    ) -> OrderMessageResponse:
-        """Modify an existing order's price and/or quantity."""
-        order = self._find_order(request.order_id)
+    ) -> OrderMessageResponse | Order:
+        """Validate request context and find the target order.
+
+        Checks exchange state, participant registration, participant
+        ownership, and order existence/activity. Returns the Order on
+        success, or an OrderMessageResponse on failure.
+        """
+        if not self.is_open:
+            return OrderMessageResponse(
+                request_status=RequestStatus.REJECTED,
+                order_id=request.order_id,
+                rejection_reason=RejectionReason.EXCHANGE_CLOSED,
+            )
+
+        if request.participant_id not in self._participants:
+            return OrderMessageResponse(
+                request_status=RequestStatus.REJECTED,
+                order_id=request.order_id,
+                rejection_reason=RejectionReason.UNREGISTERED_PARTICIPANT,
+            )
+
+        order = self._find_order(request.order_id, request.instrument)
         if order is None:
             return OrderMessageResponse(
                 request_status=RequestStatus.ORDER_NOT_FOUND,
                 order_id=request.order_id,
             )
 
-        if not order.is_active:
+        if request.participant_id != order.participant_id:
             return OrderMessageResponse(
-                request_status=RequestStatus.ORDER_INACTIVE,
+                request_status=RequestStatus.REJECTED,
                 order_id=request.order_id,
+                rejection_reason=RejectionReason.UNAUTHORIZED_PARTICIPANT,
             )
+
+        if not order.is_active:
+            return self._order_response(
+                RequestStatus.ORDER_INACTIVE, order,
+            )
+
+        return order
+
+    # -- Order modification -------------------------------------------------
+
+    def _modify_order(
+        self, request: OrderMessageRequest,
+    ) -> OrderMessageResponse:
+        """Modify an existing order's price and/or quantity."""
+        result = self._validate_and_find_order(request)
+        if isinstance(result, OrderMessageResponse):
+            return result
+        order = result
 
         timestamp = self._clock.now()
         order.last_modified_timestamp = timestamp
 
-        filled = order.quantity - order.remaining_quantity
-        new_remaining = request.quantity - filled
+        filled_quantity = order.quantity - order.remaining_quantity
+        new_remaining = request.quantity - filled_quantity
 
         # If new total <= filled, the order is fully filled.
         if new_remaining <= 0:
@@ -244,21 +282,20 @@ class Exchange:
         self, request: OrderMessageRequest,
     ) -> OrderMessageResponse:
         """Cancel an existing order."""
-        order = self._find_order(request.order_id)
-        if order is None:
-            return OrderMessageResponse(
-                request_status=RequestStatus.ORDER_NOT_FOUND,
-                order_id=request.order_id,
-            )
-
-        if not order.is_active:
-            return OrderMessageResponse(
-                request_status=RequestStatus.ORDER_INACTIVE,
-                order_id=request.order_id,
-            )
+        result = self._validate_and_find_order(request)
+        if isinstance(result, OrderMessageResponse):
+            return result
+        order = result
 
         book = self._order_books[order.instrument]
-        book.cancel_order(request.order_id)
+        cancelled = book.cancel_order(request.order_id)
+        if cancelled is None:
+            return OrderMessageResponse(
+                request_status=RequestStatus.INTERNAL_ERROR,
+                order_id=request.order_id,
+            )
+
+        order.last_modified_timestamp = self._clock.now()
         return self._order_response(RequestStatus.CANCELLED, order)
 
     # -- Query methods ------------------------------------------------------
@@ -302,6 +339,7 @@ class Exchange:
             price=order.price,
             quantity=order.quantity,
             remaining_quantity=order.remaining_quantity,
+            filled_quantity=order.quantity - order.remaining_quantity,
             creation_timestamp=order.creation_timestamp,
             last_modified_timestamp=order.last_modified_timestamp,
         )

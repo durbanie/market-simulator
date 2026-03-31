@@ -4,9 +4,11 @@ import pytest
 
 from market_simulator.core.exchange_enums import (
     Action,
+    ExchangeState,
     OrderStatus,
     OrderType,
     RejectionReason,
+    RequestStatus,
     Side,
 )
 
@@ -70,6 +72,7 @@ class TestRejectionReason:
             RejectionReason.NON_POSITIVE_QUANTITY,
             RejectionReason.EXCHANGE_CLOSED,
             RejectionReason.NO_LIQUIDITY,
+            RejectionReason.UNAUTHORIZED_PARTICIPANT,
         }
         assert set(RejectionReason) == expected
 
@@ -80,6 +83,43 @@ class TestRejectionReason:
     def test_invalid_value_raises(self):
         with pytest.raises(ValueError):
             RejectionReason("INVALID")
+
+
+class TestExchangeState:
+    def test_members(self):
+        assert set(ExchangeState) == {ExchangeState.OPEN, ExchangeState.CLOSED}
+
+    def test_construction_from_string(self):
+        assert ExchangeState("OPEN") == ExchangeState.OPEN
+        assert ExchangeState("CLOSED") == ExchangeState.CLOSED
+
+    def test_invalid_value_raises(self):
+        with pytest.raises(ValueError):
+            ExchangeState("INVALID")
+
+
+class TestRequestStatus:
+    def test_members(self):
+        expected = {
+            RequestStatus.ACCEPTED,
+            RequestStatus.FILLED,
+            RequestStatus.MODIFIED,
+            RequestStatus.MODIFIED_PRIORITY_RESET,
+            RequestStatus.CANCELLED,
+            RequestStatus.REJECTED,
+            RequestStatus.ORDER_NOT_FOUND,
+            RequestStatus.ORDER_INACTIVE,
+            RequestStatus.INTERNAL_ERROR,
+        }
+        assert set(RequestStatus) == expected
+
+    def test_construction_from_string(self):
+        for member in RequestStatus:
+            assert RequestStatus(member.value) == member
+
+    def test_invalid_value_raises(self):
+        with pytest.raises(ValueError):
+            RequestStatus("INVALID")
 
 
 class TestAction:
