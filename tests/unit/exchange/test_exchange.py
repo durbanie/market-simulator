@@ -115,6 +115,7 @@ class TestSubmitOrder:
         assert resp.price == Decimal("50.00")
         assert resp.quantity == Decimal("10")
         assert resp.remaining_quantity == Decimal("10")
+        assert resp.filled_quantity == Decimal("0")
 
     def test_limit_sell_accepted(self):
         ex = _make_exchange()
@@ -270,7 +271,7 @@ class TestRejections:
         ex = _make_exchange()
         ex.open()
         pid = _register(ex)
-        # Construct a request with a mocked action that doesn't match any.
+        # Construct a request with a fake action that doesn't match any.
         request = OrderMessageRequest(
             action=Action.SUBMIT,
             participant_id=pid,
@@ -375,10 +376,13 @@ class TestModifyOrder:
         assert resp.order_status == OrderStatus.ACCEPTED
         assert resp.instrument == "XYZ"
         assert resp.side == Side.BUY
+        assert resp.order_type == OrderType.LIMIT
         assert resp.price == Decimal("50")
         assert resp.quantity == Decimal("80")
         assert resp.remaining_quantity == Decimal("80")
         assert resp.filled_quantity == Decimal("0")
+        assert resp.creation_timestamp is not None
+        assert resp.last_modified_timestamp is not None
 
     def test_modify_to_filled_equal_to_filled(self):
         """Modify total to exactly the filled amount marks FILLED."""
@@ -535,6 +539,7 @@ class TestCancelOrder:
         assert resp.request_status == RequestStatus.CANCELLED
         assert resp.order_status == OrderStatus.CANCELLED
         assert resp.instrument == "XYZ"
+        assert resp.filled_quantity == Decimal("0")
         order = ex.get_order(r.order_id)
         assert order.status == OrderStatus.CANCELLED
 
