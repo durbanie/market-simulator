@@ -276,14 +276,16 @@ class Exchange:
         remaining_increased = new_remaining > order.remaining_quantity
         loses_priority = price_changed or remaining_increased
 
-        book = self._order_books[order.instrument]
-        book.modify_order(
-            order_id=order.order_id,
-            new_price=request.price,
-            new_quantity=request.quantity,
-            new_remaining=new_remaining,
-            loses_priority=loses_priority,
-        )
+        # Update order fields.
+        old_price = order.price
+        order.quantity = request.quantity
+        order.remaining_quantity = new_remaining
+        if price_changed:
+            order.price = request.price
+
+        if loses_priority:
+            book = self._order_books[order.instrument]
+            book.reposition_order(order.order_id, old_price)
 
         status = (
             RequestStatus.MODIFIED_PRIORITY_RESET
@@ -311,14 +313,7 @@ class Exchange:
             return result
         order = result
 
-        book = self._order_books[order.instrument]
-        cancelled = book.cancel_order(request.order_id)
-        if cancelled is None:
-            return OrderMessageResponse(
-                request_status=RequestStatus.INTERNAL_ERROR,
-                order_id=request.order_id,
-            )
-
+        order.status = OrderStatus.CANCELLED
         order.last_modified_timestamp = self._clock.now()
         return self._order_response(RequestStatus.CANCELLED, order)
 
