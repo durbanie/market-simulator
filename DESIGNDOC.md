@@ -222,7 +222,7 @@ The order book data structure should implement a price-time priority, and effici
 - `order_map` is a plain Python `dict` keyed on `order_id.`  
 - Bids and asks are separate `SortedDict` instances — no shared structure.
 
-The order book is a pure data structure — it manages price-time priority queues but does not interpret modify semantics. The Exchange is responsible for all business logic: determining whether a modify loses time priority, computing updated `remaining_quantity`, and constructing client responses. The order book's `modify_order` method simply applies the caller-provided field updates and repositions the order in the queue if told to.
+The order book is a pure data structure — it manages price-time priority queues but does not modify order fields. The Exchange is responsible for all business logic: determining whether a modify loses time priority, computing and applying field updates (`quantity`, `remaining_quantity`, `price`, `status`), and constructing client responses. The order book exposes `reposition_order` which removes an order from its current queue position and re-adds it at the back of the (possibly new) price level — this is called by the Exchange only when a modification loses time priority. Cancellation is handled entirely by the Exchange (setting `status` to `CANCELLED`); the order book's lazy deletion skips inactive orders during matching and depth queries.
 
 Matching should work as follows:
 

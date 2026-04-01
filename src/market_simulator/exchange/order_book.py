@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from sortedcontainers import SortedDict
 
-from market_simulator.core.exchange_enums import OrderStatus, Side
+from market_simulator.core.exchange_enums import Side
 from market_simulator.exchange.data import Order
 
 # (price, total_quantity) for a single price level in depth output.
@@ -51,47 +51,26 @@ class OrderBook:
         book[key].append(order)
         self._order_map[order.order_id] = order
 
-    def cancel_order(self, order_id: int) -> Order | None:
-        """Mark an order as cancelled (lazy deletion).
-
-        Returns the cancelled order, or None if the order was not found
-        or is no longer active (already filled, cancelled, or rejected).
-        """
-        order = self._order_map.get(order_id)
-        if order is None or not order.is_active:
-            return None
-        order.status = OrderStatus.CANCELLED
-        return order
-
     def get_order(self, order_id: int) -> Order | None:
         """Look up an order by ID."""
         return self._order_map.get(order_id)
 
-    def modify_order(
+    def reposition_order(
         self,
         order_id: int,
         new_price: Decimal | None,
-        new_quantity: Decimal,
-        new_remaining: Decimal,
-        loses_priority: bool,
     ) -> Order | None:
-        """Modify an order's price and/or quantity.
+        """Reposition an order in the queue after a priority-losing modify.
 
-        This is a low-level method — the caller (Exchange) is responsible
-        for computing field updates and determining whether priority is
-        lost. This method simply applies the updates and repositions the
-        order in the queue if needed.
+        Removes the order from its current queue position and places it at
+        the back of the (possibly new) price level. The caller (Exchange)
+        is responsible for updating all order fields before calling this.
 
         Args:
-            order_id: The order to modify.
+            order_id: The order to reposition.
             new_price: New limit price, or None to keep the current price.
-            new_quantity: New total quantity (caller computes this).
-            new_remaining: New remaining quantity (caller computes this).
-            loses_priority: If True, the order is removed from its current
-                queue position and placed at the back of the (possibly
-                new) price level. Otherwise, modified in place.
 
-        Returns the modified order, or None if the order is not found
+        Returns the repositioned order, or None if the order is not found
         or no longer active (cancelled/filled).
         """
         order = self._order_map.get(order_id)
@@ -100,12 +79,6 @@ class OrderBook:
 
         if not order.is_active:
             return None
-
-        order.quantity = new_quantity
-        order.remaining_quantity = new_remaining
-
-        if not loses_priority:
-            return order
 
         # Remove from current queue position. The order may already have
         # been removed from the deque by lazy deletion in _peek_best, so
