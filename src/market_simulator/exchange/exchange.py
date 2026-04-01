@@ -46,8 +46,8 @@ class Exchange:
     """Central exchange for order processing and matching.
 
     The exchange validates incoming order messages, manages order books
-    per instrument, and tracks registered participants. Matching and
-    fee logic are added in a subsequent layer.
+    per instrument, matches crossing orders, and tracks registered
+    participants.
 
     Args:
         config: Exchange configuration.
@@ -222,19 +222,110 @@ class Exchange:
                 RequestStatus.REJECTED, order, submit_rejection,
             )
 
-        # Add limit orders to the book.
-        if order.order_type == OrderType.LIMIT:
-            self._order_books[order.instrument].add_order(order)
-            return self._order_response(RequestStatus.ACCEPTED, order)
+        book = self._order_books[order.instrument]
 
-        # Market orders must always fill or be rejected — never rest on
-        # the book. Matching engine will handle fills; for now reject
-        # with NO_LIQUIDITY.
-        order.status = OrderStatus.REJECTED
-        order.rejection_reason = RejectionReason.NO_LIQUIDITY
-        return self._order_response(
-            RequestStatus.REJECTED, order, RejectionReason.NO_LIQUIDITY,
+        if order.order_type == OrderType.LIMIT:
+            self._match_order(order, book)
+            if order.remaining_quantity > 0:
+                book.add_order(order)
+            request_status = (
+                RequestStatus.FILLED if order.status == OrderStatus.FILLED
+                else RequestStatus.ACCEPTED
+            )
+            return self._order_response(request_status, order)
+
+        # Market orders: fill what's available, rest remainder at last
+        # fill price. Reject if no liquidity at all.
+        peek = (book.peek_best_ask if order.side == Side.BUY
+                else book.peek_best_bid)
+        if peek() is None:
+            order.status = OrderStatus.REJECTED
+            order.rejection_reason = RejectionReason.NO_LIQUIDITY
+            return self._order_response(
+                RequestStatus.REJECTED, order, RejectionReason.NO_LIQUIDITY,
+            )
+        self._match_order(order, book)
+        if order.remaining_quantity > 0:
+            # Rest remainder at the last fill price.
+            order.price = self._transactions[-1].price
+            book.add_order(order)
+        request_status = (
+            RequestStatus.FILLED if order.status == OrderStatus.FILLED
+            else RequestStatus.ACCEPTED
         )
+        return self._order_response(request_status, order)
+
+    # -- Order matching -----------------------------------------------------
+
+    def _match_order(self, order: Order, book: OrderBook) -> None:
+        """Match an incoming order against resting orders on the book.
+
+        Fills execute at the resting (maker) order's price. Each fill
+        creates a Transaction. Both the incoming and resting orders are
+        updated in place. Market orders must have sufficient liquidity
+        verified before calling this method.
+
+        Args:
+            order: The incoming (taker) order.
+            book: The order book for the order's instrument.
+        """
+        timestamp = self._clock.now()
+        peek = (book.peek_best_ask if order.side == Side.BUY
+                else book.peek_best_bid)
+        bps_divisor = Decimal("10000")
+
+        while order.remaining_quantity > 0:
+            resting = peek()
+            if resting is None:
+                break
+
+            # Limit orders only match if the price crosses.
+            if order.order_type == OrderType.LIMIT:
+                if order.side == Side.BUY and order.price < resting.price:
+                    break
+                if order.side == Side.SELL and order.price > resting.price:
+                    break
+
+            fill_qty = min(order.remaining_quantity, resting.remaining_quantity)
+            fill_price = resting.price
+
+            # Update resting (maker) order.
+            resting.remaining_quantity -= fill_qty
+            resting.status = (
+                OrderStatus.FILLED if resting.remaining_quantity == 0
+                else OrderStatus.PARTIALLY_FILLED
+            )
+            resting.last_modified_timestamp = timestamp
+
+            # Update incoming (taker) order.
+            order.remaining_quantity -= fill_qty
+            order.status = (
+                OrderStatus.FILLED if order.remaining_quantity == 0
+                else OrderStatus.PARTIALLY_FILLED
+            )
+            order.last_modified_timestamp = timestamp
+
+            # Compute fees.
+            notional = fill_price * fill_qty
+            maker_fee = notional * self._config.maker_fee_bps / bps_divisor
+            taker_fee = notional * self._config.taker_fee_bps / bps_divisor
+
+            # Record transaction.
+            txn = Transaction(
+                transaction_id=self._next_transaction_id,
+                timestamp=timestamp,
+                instrument=order.instrument,
+                price=fill_price,
+                quantity=fill_qty,
+                maker_order_id=resting.order_id,
+                taker_order_id=order.order_id,
+                maker_participant_id=resting.participant_id,
+                taker_participant_id=order.participant_id,
+                maker_fee=maker_fee,
+                taker_fee=taker_fee,
+            )
+            self._next_transaction_id += 1
+            self._transactions.append(txn)
 
     # -- Order modification -------------------------------------------------
 
