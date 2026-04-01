@@ -192,7 +192,7 @@ The response uses flat fields rather than embedding `Order` or `Transaction` obj
 
 Submit, modify, and cancel logic are private to the exchange:
 
-- Submit accepts limit buy, limit sell, market buy, and market sell orders, assigning an `order_id` (incrementing from a configured starting value). Market orders must always fill or be rejected — they never rest on the book.
+- Submit accepts limit buy, limit sell, market buy, and market sell orders, assigning an `order_id` (incrementing from a configured starting value). Market orders fill available liquidity immediately; if no liquidity exists the order is rejected. If a market order partially fills (liquidity exhausted before the full quantity is matched), the remainder rests on the book at the last fill price as a `PARTIALLY_FILLED` order. The participant pays taker fees on the filled portion and receives maker rebates if/when the resting portion fills.
 - Modify allows changing price and/or quantity. The quantity in a modify request refers to the new total order quantity (not the remaining). If the new total is less than or equal to the already-filled quantity, the remaining is set to 0 and the order is marked `FILLED`. Otherwise, the remaining is adjusted to (new total - filled). A price change or an increase in remaining quantity loses time priority (the order is removed from its current queue position and placed at the back of the new or same price level) while retaining the same `order_id`. A decrease in remaining quantity modifies the order in place without losing time priority.
 - Cancel cancels the order if it is still active (not already cancelled or filled).  
 

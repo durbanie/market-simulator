@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.1.7 — Order matching engine
+
+- Add `_match_order` to `Exchange`: fills incoming orders against resting orders at the maker's price, computes maker/taker fees, creates `Transaction` records
+- Market orders fill available liquidity; if partially filled, remainder rests on the book at the last fill price
+- Market orders with no liquidity rejected with `NO_LIQUIDITY`
+- Crossing limit orders fill at the resting (maker) price; unfilled remainder rests on the book
+- 18 new tests covering market fills, crossing limits, partial fills, fees, transactions, and edge cases
+- Update `DESIGNDOC.md` with market order resting semantics
+
+## v1.1.6 — OrderBook refactor (pure data structure)
+
+- Remove `cancel_order` from `OrderBook` — cancellation now handled entirely by `Exchange`
+- Rename `modify_order` to `reposition_order` — only handles queue repositioning; all field updates done by `Exchange`
+- `reposition_order` takes `old_price` parameter; caller sets all fields (including price) before calling
+- Remove `OrderStatus` import from `order_book.py`
+- Update `DESIGNDOC.md` to reflect OrderBook/Exchange boundary
+
 ## v1.1.5 — Exchange core (order processing and validation)
 
 - Add `Exchange` class in `exchange/exchange.py` with configurable instruments, fee bps, and starting IDs
