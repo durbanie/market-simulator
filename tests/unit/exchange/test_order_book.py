@@ -123,9 +123,7 @@ class TestPriceTimePriority:
         assert book.peek_best_ask() is o2
 
 
-class TestCancelledOrderHandling:
-    """Verify the book correctly skips cancelled orders via lazy deletion."""
-
+class TestLazyDeletion:
     def test_cancelled_order_skipped_by_best_bid(self):
         book = OrderBook("XYZ")
         o1 = _make_order(1, Side.BUY, Decimal("51.00"))
@@ -152,8 +150,6 @@ class TestCancelledOrderHandling:
         assert book.best_bid_price() is None
         assert book.peek_best_bid() is None
 
-
-class TestLazyDeletion:
     def test_peek_skips_cancelled_at_front(self):
         book = OrderBook("XYZ")
         o1 = _make_order(1, Side.BUY, Decimal("50.00"))
@@ -206,7 +202,7 @@ class TestRepositionOrder:
         o2 = _make_order(2, Side.BUY, Decimal("50.00"), Decimal("100"))
         book.add_order(o1)
         book.add_order(o2)
-        result = book.reposition_order(1, new_price=None)
+        result = book.reposition_order(1, Decimal("50.00"))
         assert result is o1
         # o2 should now be at the front (o1 moved to back).
         assert book.peek_best_bid() is o2
@@ -217,9 +213,10 @@ class TestRepositionOrder:
         o2 = _make_order(2, Side.BUY, Decimal("50.00"), Decimal("100"))
         book.add_order(o1)
         book.add_order(o2)
-        result = book.reposition_order(1, new_price=Decimal("51.00"))
+        # Caller updates price before repositioning.
+        o1.price = Decimal("51.00")
+        result = book.reposition_order(1, Decimal("50.00"))
         assert result is o1
-        assert o1.price == Decimal("51.00")
         assert book.best_bid_price() == Decimal("51.00")
         assert book.peek_best_bid() is o1
 
@@ -229,7 +226,8 @@ class TestRepositionOrder:
         o2 = _make_order(2, Side.BUY, Decimal("50.00"), Decimal("100"))
         book.add_order(o1)
         book.add_order(o2)
-        book.reposition_order(1, new_price=Decimal("49.00"))
+        o1.price = Decimal("49.00")
+        book.reposition_order(1, Decimal("51.00"))
         assert book.best_bid_price() == Decimal("50.00")
         assert book.peek_best_bid() is o2
 
@@ -238,7 +236,7 @@ class TestRepositionOrder:
         o = _make_order(1, Side.BUY, Decimal("50.00"), Decimal("100"))
         book.add_order(o)
         o.status = OrderStatus.CANCELLED
-        result = book.reposition_order(1, new_price=None)
+        result = book.reposition_order(1, Decimal("50.00"))
         assert result is None
 
     def test_reposition_filled_order_returns_none(self):
@@ -246,12 +244,12 @@ class TestRepositionOrder:
         o = _make_order(1, Side.SELL, Decimal("55.00"), Decimal("100"))
         book.add_order(o)
         o.status = OrderStatus.FILLED
-        result = book.reposition_order(1, new_price=Decimal("56.00"))
+        result = book.reposition_order(1, Decimal("55.00"))
         assert result is None
 
     def test_reposition_nonexistent_order_returns_none(self):
         book = OrderBook("XYZ")
-        result = book.reposition_order(999, new_price=None)
+        result = book.reposition_order(999, Decimal("50.00"))
         assert result is None
 
     def test_reposition_partially_filled_order(self):
@@ -264,7 +262,7 @@ class TestRepositionOrder:
         o1.status = OrderStatus.PARTIALLY_FILLED
         o1.remaining_quantity = Decimal("70")
         # Caller already updated fields; reposition moves to back.
-        result = book.reposition_order(1, new_price=None)
+        result = book.reposition_order(1, Decimal("50.00"))
         assert result is o1
         assert book.peek_best_bid() is o2
 

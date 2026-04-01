@@ -56,19 +56,19 @@ class OrderBook:
         return self._order_map.get(order_id)
 
     def reposition_order(
-        self,
-        order_id: int,
-        new_price: Decimal | None,
+        self, order_id: int, old_price: Decimal,
     ) -> Order | None:
         """Reposition an order in the queue after a priority-losing modify.
 
-        Removes the order from its current queue position and places it at
-        the back of the (possibly new) price level. The caller (Exchange)
-        is responsible for updating all order fields before calling this.
+        Removes the order from the queue at ``old_price`` and re-adds it
+        at the back of the price level matching its current ``price``.
+        The caller (Exchange) is responsible for updating all order
+        fields — including price — before calling this.
 
         Args:
             order_id: The order to reposition.
-            new_price: New limit price, or None to keep the current price.
+            old_price: The price the order was at before the modification,
+                used to locate the old queue position.
 
         Returns the repositioned order, or None if the order is not found
         or no longer active (cancelled/filled).
@@ -80,12 +80,12 @@ class OrderBook:
         if not order.is_active:
             return None
 
-        # Remove from current queue position. The order may already have
-        # been removed from the deque by lazy deletion in _peek_best, so
-        # we silently handle the case where it is not found.
+        # Remove from old queue position. The order may already have been
+        # removed from the deque by lazy deletion in _peek_best, so we
+        # silently handle the case where it is not found.
         # TODO: Add lazy logging (log_every_N) for swallowed errors.
         book = self._side_book(order.side)
-        old_key = self._price_key(order.side, order.price)
+        old_key = self._price_key(order.side, old_price)
         if old_key in book:
             queue = book[old_key]
             try:
@@ -93,11 +93,7 @@ class OrderBook:
             except ValueError:
                 pass
 
-        # Update price if changed.
-        if new_price is not None:
-            order.price = new_price
-
-        # Re-add at back of (possibly new) price level.
+        # Re-add at back of price level for the order's current price.
         new_key = self._price_key(order.side, order.price)
         if new_key not in book:
             book[new_key] = deque()

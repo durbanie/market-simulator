@@ -277,15 +277,15 @@ class Exchange:
         loses_priority = price_changed or remaining_increased
 
         # Update order fields.
+        old_price = order.price
         order.quantity = request.quantity
         order.remaining_quantity = new_remaining
+        if price_changed:
+            order.price = request.price
 
         if loses_priority:
             book = self._order_books[order.instrument]
-            book.reposition_order(
-                order_id=order.order_id,
-                new_price=request.price,
-            )
+            book.reposition_order(order.order_id, old_price)
 
         status = (
             RequestStatus.MODIFIED_PRIORITY_RESET
