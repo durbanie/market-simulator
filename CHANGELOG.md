@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.1.8 — DMA Client
+
+- Add `DMAClient` ABC in `exchange/client/dma_client.py` using the template method pattern: concrete public API enforces invariants (single registration, must-be-registered), abstract `_send_*` transport methods for subclasses
+- Add `LocalDMAClient` in `exchange/client/local_dma_client.py`: in-process dummy/puppet client that calls `Exchange` directly, driven externally by runner or test fixtures
+- Single registration per client: `register()` raises `RuntimeError` on second call
+- Client stores `participant_id` internally and sets it on all outgoing requests
+- Callback-based response pattern (`Callable[[ResponseType], None]`) on all methods for future network transport compatibility
+- Add query response dataclasses in `core/messages.py`: `ExchangeStatusResponse`, `DepthResponse`, `OrderQueryResponse`, `TransactionsResponse`
+- 16 new tests covering registration, order lifecycle, query methods, and invariant enforcement
+
 ## v1.1.7 — Order matching engine
 
 - Add `_match_order` to `Exchange`: fills incoming orders against resting orders at the maker's price, computes maker/taker fees, creates `Transaction` records
