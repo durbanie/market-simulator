@@ -776,7 +776,7 @@ class TestMatching:
         assert resting.remaining_quantity == Decimal("2")
         assert resting.status == OrderStatus.PARTIALLY_FILLED
 
-    def test_market_order_rejected_insufficient_liquidity(self):
+    def test_market_order_partial_fill_rests_remainder(self):
         ex = _make_exchange()
         ex.open()
         maker = _register(ex)
@@ -784,14 +784,38 @@ class TestMatching:
         _submit_limit(
             ex, maker, "XYZ", Side.SELL, Decimal("50.00"), Decimal("5"),
         )
-        # Request more than available — fill-or-kill rejects.
         resp = _submit_market(ex, taker, "XYZ", Side.BUY, Decimal("10"))
-        assert resp.request_status == RequestStatus.REJECTED
-        assert resp.rejection_reason == RejectionReason.NO_LIQUIDITY
-        assert ex.get_transactions() == []
-        # Resting order untouched.
-        resting = ex.get_order(1, "XYZ")
-        assert resting.remaining_quantity == Decimal("5")
+        assert resp.request_status == RequestStatus.ACCEPTED
+        assert resp.order_status == OrderStatus.PARTIALLY_FILLED
+        assert resp.filled_quantity == Decimal("5")
+        assert resp.remaining_quantity == Decimal("5")
+        # Remainder rests on bid side at last fill price.
+        depth = ex.get_depth("XYZ", 5)
+        assert depth["bids"] == [(Decimal("50.00"), Decimal("5"))]
+        assert depth["asks"] == []
+        # One transaction for the filled portion.
+        txns = ex.get_transactions()
+        assert len(txns) == 1
+        assert txns[0].quantity == Decimal("5")
+
+    def test_market_order_partial_fill_rests_at_last_fill_price(self):
+        ex = _make_exchange()
+        ex.open()
+        maker = _register(ex)
+        taker = _register(ex)
+        _submit_limit(
+            ex, maker, "XYZ", Side.SELL, Decimal("50.00"), Decimal("3"),
+        )
+        _submit_limit(
+            ex, maker, "XYZ", Side.SELL, Decimal("50.10"), Decimal("3"),
+        )
+        # Buy 10: fills 3@50.00, 3@50.10, remainder 4 rests at 50.10.
+        resp = _submit_market(ex, taker, "XYZ", Side.BUY, Decimal("10"))
+        assert resp.request_status == RequestStatus.ACCEPTED
+        assert resp.filled_quantity == Decimal("6")
+        assert resp.remaining_quantity == Decimal("4")
+        depth = ex.get_depth("XYZ", 5)
+        assert depth["bids"] == [(Decimal("50.10"), Decimal("4"))]
 
     def test_market_order_not_on_book_after_fill(self):
         ex = _make_exchange()

@@ -141,19 +141,6 @@ class OrderBook:
                 return queue[0]
         return None
 
-    def available_quantity(self, side: Side) -> Decimal:
-        """Return total active remaining quantity on the given side.
-
-        Args:
-            side: The book side to sum (BUY for bids, SELL for asks).
-        """
-        book = self._side_book(side)
-        return sum(
-            (o.remaining_quantity for queue in book.values()
-             for o in queue if o.is_active),
-            Decimal("0"),
-        )
-
     def get_depth(self, levels: int) -> dict[str, list[DepthLevel]]:
         """Return the top N price levels per side.
 

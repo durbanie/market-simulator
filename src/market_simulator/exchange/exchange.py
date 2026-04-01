@@ -234,17 +234,26 @@ class Exchange:
             )
             return self._order_response(request_status, order)
 
-        # Market orders are fill-or-kill: reject if insufficient liquidity.
-        opposing_side = Side.SELL if order.side == Side.BUY else Side.BUY
-        available = book.available_quantity(opposing_side)
-        if available < order.quantity:
+        # Market orders: fill what's available, rest remainder at last
+        # fill price. Reject if no liquidity at all.
+        peek = (book.peek_best_ask if order.side == Side.BUY
+                else book.peek_best_bid)
+        if peek() is None:
             order.status = OrderStatus.REJECTED
             order.rejection_reason = RejectionReason.NO_LIQUIDITY
             return self._order_response(
                 RequestStatus.REJECTED, order, RejectionReason.NO_LIQUIDITY,
             )
         self._match_order(order, book)
-        return self._order_response(RequestStatus.FILLED, order)
+        if order.remaining_quantity > 0:
+            # Rest remainder at the last fill price.
+            order.price = self._transactions[-1].price
+            book.add_order(order)
+        request_status = (
+            RequestStatus.FILLED if order.status == OrderStatus.FILLED
+            else RequestStatus.ACCEPTED
+        )
+        return self._order_response(request_status, order)
 
     # -- Order matching -----------------------------------------------------
 
