@@ -2,11 +2,10 @@
 
 ## v1.1.8 — DMA Client
 
-- Add `DMAClient` ABC in `exchange/client/dma_client.py` using the template method pattern: concrete public API enforces invariants (single registration, must-be-registered), abstract `_send_*` transport methods for subclasses
-- Add `LocalDMAClient` in `exchange/client/local_dma_client.py`: in-process dummy/puppet client that calls `Exchange` directly, driven externally by runner or test fixtures
-- Single registration per client: `register()` raises `RuntimeError` on second call
-- Client stores `participant_id` internally and sets it on all outgoing requests
-- Callback-based response pattern (`Callable[[ResponseType], None]`) on all methods for future network transport compatibility
+- Add `DMAClient` ABC in `exchange/client/dma_client.py`: base class owns all exchange communication (calls exchange, stores `participant_id`, builds query responses), dispatches to abstract `_on_*` response callbacks that subclasses override
+- Add `LocalDMAClient` in `exchange/client/local_dma_client.py`: externally controllable puppet with no-op callbacks; public methods (`register`, `send_order_message`, queries) return responses directly for runner/test use
+- Single registration per client: `_register()` raises `RuntimeError` on second call
+- Base class sets `participant_id` on all outgoing `OrderMessageRequest`s
 - Add query response dataclasses in `core/messages.py`: `ExchangeStatusResponse`, `DepthResponse`, `OrderQueryResponse`, `TransactionsResponse`
 - 16 new tests covering registration, order lifecycle, query methods, and invariant enforcement
 

@@ -1,10 +1,8 @@
-"""Local DMA client: in-process transport to the exchange.
+"""Local DMA client: in-process puppet driven by the runner.
 
-A dummy/puppet client with no autonomous behavior.  Driven externally
-by the runner, test fixtures, or CSV-based scenarios.
+Has no autonomous behavior.  The runner, test fixtures, or CSV-based
+scenarios call its public methods to direct exchange interaction.
 """
-
-from collections.abc import Callable
 
 from market_simulator.core.messages import (
     DepthResponse,
@@ -20,74 +18,79 @@ from market_simulator.exchange.exchange import Exchange
 
 
 class LocalDMAClient(DMAClient):
-    """DMA client that calls the exchange directly in-process.
+    """Puppet DMA client for in-process use.
 
-    All callbacks are invoked synchronously within the calling thread.
+    Exposes public methods that the runner calls to trigger exchange
+    communication.  Response callbacks are no-ops; the runner uses the
+    return values from the public methods directly.
 
     Args:
         exchange: The exchange instance to interact with.
     """
 
     def __init__(self, exchange: Exchange) -> None:
-        super().__init__()
-        self._exchange = exchange
+        super().__init__(exchange)
 
-    def _send_registration(
-        self, on_response: Callable[[RegistrationResponse], None],
-    ) -> None:
-        response = self._exchange.handle_registration_request()
-        self._participant_id = response.participant_id
-        on_response(response)
+    # -- Public API for runner / test control ----------------------------------
 
-    def _send_order_message(
-        self,
-        request: OrderMessageRequest,
-        on_response: Callable[[OrderMessageResponse], None],
-    ) -> None:
-        response = self._exchange.handle_order_message(request)
-        on_response(response)
+    def register(self) -> RegistrationResponse:
+        """Register with the exchange and return the response."""
+        return self._register()
 
-    def _send_exchange_status_query(
-        self, on_response: Callable[[ExchangeStatusResponse], None],
-    ) -> None:
-        on_response(ExchangeStatusResponse(is_open=self._exchange.is_open))
+    def send_order_message(
+        self, request: OrderMessageRequest,
+    ) -> OrderMessageResponse:
+        """Send an order message and return the response."""
+        return self._send_order_message(request)
 
-    def _send_depth_query(
-        self,
-        instrument: str,
-        levels: int,
-        on_response: Callable[[DepthResponse], None],
-    ) -> None:
-        depth = self._exchange.get_depth(instrument, levels)
-        on_response(DepthResponse(instrument=instrument, levels=depth))
+    def get_exchange_status(self) -> ExchangeStatusResponse:
+        """Query exchange status and return the response."""
+        return self._query_exchange_status()
 
-    def _send_order_query(
-        self,
-        order_id: int,
-        on_response: Callable[[OrderQueryResponse], None],
-        instrument: str | None,
-    ) -> None:
-        order = self._exchange.get_order(order_id, instrument)
-        if order is None:
-            on_response(OrderQueryResponse(order_id=order_id, found=False))
-            return
-        on_response(OrderQueryResponse(
-            order_id=order_id,
-            found=True,
-            order_status=order.status,
-            instrument=order.instrument,
-            side=order.side,
-            order_type=order.order_type,
-            price=order.price,
-            quantity=order.quantity,
-            remaining_quantity=order.remaining_quantity,
-            filled_quantity=order.quantity - order.remaining_quantity,
-            creation_timestamp=order.creation_timestamp,
-            last_modified_timestamp=order.last_modified_timestamp,
-        ))
+    def get_depth(
+        self, instrument: str, levels: int,
+    ) -> DepthResponse:
+        """Query order book depth and return the response."""
+        return self._query_depth(instrument, levels)
 
-    def _send_transactions_query(
-        self, on_response: Callable[[TransactionsResponse], None],
+    def get_order(
+        self, order_id: int, instrument: str | None = None,
+    ) -> OrderQueryResponse:
+        """Query a single order and return the response."""
+        return self._query_order(order_id, instrument)
+
+    def get_transactions(self) -> TransactionsResponse:
+        """Query all transactions and return the response."""
+        return self._query_transactions()
+
+    # -- Response callbacks (no-ops for puppet) --------------------------------
+
+    def _on_registration_response(
+        self, response: RegistrationResponse,
     ) -> None:
-        txns = self._exchange.get_transactions()
-        on_response(TransactionsResponse(transactions=txns))
+        pass
+
+    def _on_order_message_response(
+        self, response: OrderMessageResponse,
+    ) -> None:
+        pass
+
+    def _on_exchange_status_response(
+        self, response: ExchangeStatusResponse,
+    ) -> None:
+        pass
+
+    def _on_depth_response(
+        self, response: DepthResponse,
+    ) -> None:
+        pass
+
+    def _on_order_query_response(
+        self, response: OrderQueryResponse,
+    ) -> None:
+        pass
+
+    def _on_transactions_response(
+        self, response: TransactionsResponse,
+    ) -> None:
+        pass
