@@ -699,3 +699,309 @@ class TestMultipleInstruments:
         assert len(abc["bids"]) == 1
         assert xyz["bids"][0] == (Decimal("50"), Decimal("10"))
         assert abc["bids"][0] == (Decimal("25"), Decimal("20"))
+
+
+class TestMatching:
+    """Tests for the order matching engine."""
+
+    # -- Market order matching ------------------------------------------------
+
+    def test_market_buy_fills_resting_ask(self):
+        ex = _make_exchange()
+        ex.open()
+        maker = _register(ex)
+        taker = _register(ex)
+        _submit_limit(ex, maker, "XYZ", Side.SELL, Decimal("50.00"), Decimal("10"))
+        resp = _submit_market(ex, taker, "XYZ", Side.BUY, Decimal("10"))
+        assert resp.request_status == RequestStatus.FILLED
+        assert resp.order_status == OrderStatus.FILLED
+        assert resp.remaining_quantity == Decimal("0")
+        assert resp.filled_quantity == Decimal("10")
+        txns = ex.get_transactions()
+        assert len(txns) == 1
+        assert txns[0].price == Decimal("50.00")
+        assert txns[0].quantity == Decimal("10")
+
+    def test_market_sell_fills_resting_bid(self):
+        ex = _make_exchange()
+        ex.open()
+        maker = _register(ex)
+        taker = _register(ex)
+        _submit_limit(ex, maker, "XYZ", Side.BUY, Decimal("50.00"), Decimal("10"))
+        resp = _submit_market(ex, taker, "XYZ", Side.SELL, Decimal("10"))
+        assert resp.request_status == RequestStatus.FILLED
+        assert resp.order_status == OrderStatus.FILLED
+        assert resp.filled_quantity == Decimal("10")
+        txns = ex.get_transactions()
+        assert len(txns) == 1
+        assert txns[0].price == Decimal("50.00")
+
+    def test_market_buy_fills_at_resting_price(self):
+        ex = _make_exchange()
+        ex.open()
+        maker = _register(ex)
+        taker = _register(ex)
+        _submit_limit(
+            ex, maker, "XYZ", Side.SELL, Decimal("50.05"), Decimal("10"),
+        )
+        resp = _submit_market(ex, taker, "XYZ", Side.BUY, Decimal("10"))
+        assert resp.request_status == RequestStatus.FILLED
+        txns = ex.get_transactions()
+        assert txns[0].price == Decimal("50.05")
+
+    def test_market_order_fills_multiple_levels(self):
+        ex = _make_exchange()
+        ex.open()
+        maker = _register(ex)
+        taker = _register(ex)
+        _submit_limit(
+            ex, maker, "XYZ", Side.SELL, Decimal("50.00"), Decimal("5"),
+        )
+        _submit_limit(
+            ex, maker, "XYZ", Side.SELL, Decimal("50.10"), Decimal("5"),
+        )
+        resp = _submit_market(ex, taker, "XYZ", Side.BUY, Decimal("8"))
+        assert resp.request_status == RequestStatus.FILLED
+        assert resp.filled_quantity == Decimal("8")
+        txns = ex.get_transactions()
+        assert len(txns) == 2
+        # First fill at best price.
+        assert txns[0].price == Decimal("50.00")
+        assert txns[0].quantity == Decimal("5")
+        # Second fill at next level.
+        assert txns[1].price == Decimal("50.10")
+        assert txns[1].quantity == Decimal("3")
+        # Resting order at 50.10 partially filled.
+        resting = ex.get_order(2, "XYZ")
+        assert resting.remaining_quantity == Decimal("2")
+        assert resting.status == OrderStatus.PARTIALLY_FILLED
+
+    def test_market_order_rejected_insufficient_liquidity(self):
+        ex = _make_exchange()
+        ex.open()
+        maker = _register(ex)
+        taker = _register(ex)
+        _submit_limit(
+            ex, maker, "XYZ", Side.SELL, Decimal("50.00"), Decimal("5"),
+        )
+        # Request more than available — fill-or-kill rejects.
+        resp = _submit_market(ex, taker, "XYZ", Side.BUY, Decimal("10"))
+        assert resp.request_status == RequestStatus.REJECTED
+        assert resp.rejection_reason == RejectionReason.NO_LIQUIDITY
+        assert ex.get_transactions() == []
+        # Resting order untouched.
+        resting = ex.get_order(1, "XYZ")
+        assert resting.remaining_quantity == Decimal("5")
+
+    def test_market_order_not_on_book_after_fill(self):
+        ex = _make_exchange()
+        ex.open()
+        maker = _register(ex)
+        taker = _register(ex)
+        _submit_limit(
+            ex, maker, "XYZ", Side.SELL, Decimal("50.00"), Decimal("10"),
+        )
+        _submit_market(ex, taker, "XYZ", Side.BUY, Decimal("10"))
+        depth = ex.get_depth("XYZ", 5)
+        assert depth["bids"] == []
+        assert depth["asks"] == []
+
+    # -- Crossing limit order matching ----------------------------------------
+
+    def test_limit_buy_crosses_resting_ask(self):
+        ex = _make_exchange()
+        ex.open()
+        maker = _register(ex)
+        taker = _register(ex)
+        _submit_limit(
+            ex, maker, "XYZ", Side.SELL, Decimal("50.05"), Decimal("10"),
+        )
+        resp = _submit_limit(
+            ex, taker, "XYZ", Side.BUY, Decimal("50.10"), Decimal("10"),
+        )
+        assert resp.request_status == RequestStatus.FILLED
+        assert resp.order_status == OrderStatus.FILLED
+        txns = ex.get_transactions()
+        assert len(txns) == 1
+        assert txns[0].price == Decimal("50.05")
+
+    def test_limit_sell_crosses_resting_bid(self):
+        ex = _make_exchange()
+        ex.open()
+        maker = _register(ex)
+        taker = _register(ex)
+        _submit_limit(
+            ex, maker, "XYZ", Side.BUY, Decimal("50.10"), Decimal("10"),
+        )
+        resp = _submit_limit(
+            ex, taker, "XYZ", Side.SELL, Decimal("50.05"), Decimal("10"),
+        )
+        assert resp.request_status == RequestStatus.FILLED
+        txns = ex.get_transactions()
+        assert txns[0].price == Decimal("50.10")
+
+    def test_crossing_limit_partial_fill_rests_remainder(self):
+        ex = _make_exchange()
+        ex.open()
+        maker = _register(ex)
+        taker = _register(ex)
+        _submit_limit(
+            ex, maker, "XYZ", Side.SELL, Decimal("50.05"), Decimal("5"),
+        )
+        resp = _submit_limit(
+            ex, taker, "XYZ", Side.BUY, Decimal("50.10"), Decimal("10"),
+        )
+        assert resp.request_status == RequestStatus.ACCEPTED
+        assert resp.order_status == OrderStatus.PARTIALLY_FILLED
+        assert resp.filled_quantity == Decimal("5")
+        assert resp.remaining_quantity == Decimal("5")
+        # Remainder rests on bid side.
+        depth = ex.get_depth("XYZ", 5)
+        assert depth["bids"] == [(Decimal("50.10"), Decimal("5"))]
+        assert depth["asks"] == []
+
+    def test_noncrossing_limit_rests_without_fill(self):
+        ex = _make_exchange()
+        ex.open()
+        pid = _register(ex)
+        _submit_limit(
+            ex, pid, "XYZ", Side.SELL, Decimal("50.10"), Decimal("10"),
+        )
+        resp = _submit_limit(
+            ex, pid, "XYZ", Side.BUY, Decimal("50.00"), Decimal("10"),
+        )
+        assert resp.request_status == RequestStatus.ACCEPTED
+        assert resp.order_status == OrderStatus.ACCEPTED
+        assert ex.get_transactions() == []
+        depth = ex.get_depth("XYZ", 5)
+        assert len(depth["bids"]) == 1
+        assert len(depth["asks"]) == 1
+
+    def test_limit_crosses_multiple_resting_same_level(self):
+        ex = _make_exchange()
+        ex.open()
+        maker = _register(ex)
+        taker = _register(ex)
+        _submit_limit(
+            ex, maker, "XYZ", Side.SELL, Decimal("50.05"), Decimal("3"),
+        )
+        _submit_limit(
+            ex, maker, "XYZ", Side.SELL, Decimal("50.05"), Decimal("3"),
+        )
+        resp = _submit_limit(
+            ex, taker, "XYZ", Side.BUY, Decimal("50.05"), Decimal("5"),
+        )
+        assert resp.request_status == RequestStatus.FILLED
+        assert resp.filled_quantity == Decimal("5")
+        txns = ex.get_transactions()
+        assert len(txns) == 2
+        # FIFO: first resting fully filled (3), second partially (2).
+        assert txns[0].quantity == Decimal("3")
+        assert txns[0].maker_order_id == 1
+        assert txns[1].quantity == Decimal("2")
+        assert txns[1].maker_order_id == 2
+
+    # -- Fee calculation ------------------------------------------------------
+
+    def test_fee_calculation(self):
+        ex = _make_exchange()
+        ex.open()
+        maker = _register(ex)
+        taker = _register(ex)
+        _submit_limit(
+            ex, maker, "XYZ", Side.SELL, Decimal("100.00"), Decimal("10"),
+        )
+        _submit_market(ex, taker, "XYZ", Side.BUY, Decimal("10"))
+        txn = ex.get_transactions()[0]
+        # maker_fee = 100 * 10 * -3 / 10000 = -0.30 (rebate)
+        assert txn.maker_fee == Decimal("-0.30")
+        # taker_fee = 100 * 10 * 7 / 10000 = 0.70
+        assert txn.taker_fee == Decimal("0.70")
+
+    def test_fees_computed_per_fill(self):
+        ex = _make_exchange()
+        ex.open()
+        maker = _register(ex)
+        taker = _register(ex)
+        _submit_limit(
+            ex, maker, "XYZ", Side.SELL, Decimal("50.00"), Decimal("5"),
+        )
+        _submit_limit(
+            ex, maker, "XYZ", Side.SELL, Decimal("60.00"), Decimal("5"),
+        )
+        _submit_market(ex, taker, "XYZ", Side.BUY, Decimal("10"))
+        txns = ex.get_transactions()
+        # First fill: 50 * 5 * 7 / 10000 = 0.175
+        assert txns[0].taker_fee == Decimal("0.175")
+        # Second fill: 60 * 5 * 7 / 10000 = 0.21
+        assert txns[1].taker_fee == Decimal("0.21")
+
+    # -- Transaction fields ---------------------------------------------------
+
+    def test_transaction_fields_complete(self):
+        ex = _make_exchange()
+        ex.open()
+        maker = _register(ex)
+        taker = _register(ex)
+        _submit_limit(
+            ex, maker, "XYZ", Side.SELL, Decimal("50.00"), Decimal("10"),
+        )
+        _submit_market(ex, taker, "XYZ", Side.BUY, Decimal("10"))
+        txn = ex.get_transactions()[0]
+        assert txn.transaction_id == 1
+        assert txn.instrument == "XYZ"
+        assert txn.price == Decimal("50.00")
+        assert txn.quantity == Decimal("10")
+        assert txn.maker_order_id == 1
+        assert txn.taker_order_id == 2
+        assert txn.maker_participant_id == maker
+        assert txn.taker_participant_id == taker
+        assert isinstance(txn.timestamp, int)
+
+    def test_transaction_ids_increment(self):
+        ex = _make_exchange()
+        ex.open()
+        maker = _register(ex)
+        taker = _register(ex)
+        _submit_limit(
+            ex, maker, "XYZ", Side.SELL, Decimal("50.00"), Decimal("3"),
+        )
+        _submit_limit(
+            ex, maker, "XYZ", Side.SELL, Decimal("50.00"), Decimal("3"),
+        )
+        _submit_market(ex, taker, "XYZ", Side.BUY, Decimal("6"))
+        txns = ex.get_transactions()
+        assert txns[0].transaction_id == 1
+        assert txns[1].transaction_id == 2
+
+    # -- Edge cases -----------------------------------------------------------
+
+    def test_self_trade_allowed(self):
+        ex = _make_exchange()
+        ex.open()
+        pid = _register(ex)
+        _submit_limit(
+            ex, pid, "XYZ", Side.SELL, Decimal("50.00"), Decimal("10"),
+        )
+        resp = _submit_limit(
+            ex, pid, "XYZ", Side.BUY, Decimal("50.00"), Decimal("10"),
+        )
+        assert resp.request_status == RequestStatus.FILLED
+        txns = ex.get_transactions()
+        assert len(txns) == 1
+        assert txns[0].maker_participant_id == pid
+        assert txns[0].taker_participant_id == pid
+
+    def test_filled_order_removed_from_depth(self):
+        ex = _make_exchange()
+        ex.open()
+        maker = _register(ex)
+        taker = _register(ex)
+        _submit_limit(
+            ex, maker, "XYZ", Side.SELL, Decimal("50.00"), Decimal("10"),
+        )
+        depth_before = ex.get_depth("XYZ", 5)
+        assert len(depth_before["asks"]) == 1
+        _submit_market(ex, taker, "XYZ", Side.BUY, Decimal("10"))
+        depth_after = ex.get_depth("XYZ", 5)
+        assert depth_after["asks"] == []
