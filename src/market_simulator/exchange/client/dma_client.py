@@ -6,20 +6,18 @@ responses to abstract callback methods that subclasses override.
 """
 
 from abc import ABC, abstractmethod
-from decimal import Decimal
 
-from market_simulator.core.exchange_enums import (
-    Action,
-    OrderType,
-    Side,
-)
 from market_simulator.core.messages import (
+    DepthRequest,
     DepthResponse,
+    ExchangeStatusRequest,
     ExchangeStatusResponse,
     OrderMessageRequest,
     OrderMessageResponse,
+    OrderQueryRequest,
     OrderQueryResponse,
     RegistrationResponse,
+    TransactionsRequest,
     TransactionsResponse,
 )
 from market_simulator.exchange.exchange import Exchange
@@ -72,52 +70,35 @@ class DMAClient(ABC):
         self._on_order_message_response(response)
         return response
 
-    def get_exchange_status(self) -> ExchangeStatusResponse:
+    def get_exchange_status(
+        self, request: ExchangeStatusRequest,
+    ) -> ExchangeStatusResponse:
         """Query exchange status and dispatch to callback."""
-        response = ExchangeStatusResponse(is_open=self._exchange.is_open)
+        response = self._exchange.handle_exchange_status_request(request)
         self._on_exchange_status_response(response)
         return response
 
     def get_depth(
-        self, instrument: str, levels: int,
+        self, request: DepthRequest,
     ) -> DepthResponse:
         """Query order book depth and dispatch to callback."""
-        depth = self._exchange.get_depth(instrument, levels)
-        response = DepthResponse(instrument=instrument, levels=depth)
+        response = self._exchange.handle_depth_request(request)
         self._on_depth_response(response)
         return response
 
     def get_order(
-        self, order_id: int, instrument: str | None = None,
+        self, request: OrderQueryRequest,
     ) -> OrderQueryResponse:
         """Query a single order and dispatch to callback."""
-        order = self._exchange.get_order(order_id, instrument)
-        if order is None:
-            response = OrderQueryResponse(
-                order_id=order_id, found=False,
-            )
-        else:
-            response = OrderQueryResponse(
-                order_id=order_id,
-                found=True,
-                order_status=order.status,
-                instrument=order.instrument,
-                side=order.side,
-                order_type=order.order_type,
-                price=order.price,
-                quantity=order.quantity,
-                remaining_quantity=order.remaining_quantity,
-                filled_quantity=order.quantity - order.remaining_quantity,
-                creation_timestamp=order.creation_timestamp,
-                last_modified_timestamp=order.last_modified_timestamp,
-            )
+        response = self._exchange.handle_order_query_request(request)
         self._on_order_query_response(response)
         return response
 
-    def get_transactions(self) -> TransactionsResponse:
+    def get_transactions(
+        self, request: TransactionsRequest,
+    ) -> TransactionsResponse:
         """Query all transactions and dispatch to callback."""
-        txns = self._exchange.get_transactions()
-        response = TransactionsResponse(transactions=txns)
+        response = self._exchange.handle_transactions_request(request)
         self._on_transactions_response(response)
         return response
 
