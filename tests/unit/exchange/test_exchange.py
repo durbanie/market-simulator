@@ -675,7 +675,7 @@ class TestCancelOrder:
         assert resp.order_status == OrderStatus.CANCELLED
 
 
-class TestQueryHandlers:
+class TestRequestHandlers:
     def test_handle_exchange_status_request(self):
         ex = _make_exchange()
         closed = ex.handle_exchange_status_request(
