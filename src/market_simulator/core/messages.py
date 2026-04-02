@@ -83,3 +83,61 @@ class RegistrationResponse:
         participant_id: The assigned participant ID.
     """
     participant_id: int
+
+
+@dataclass
+class ExchangeStatusResponse:
+    """Response for an exchange status query.
+
+    Attributes:
+        is_open: Whether the exchange is currently accepting orders.
+    """
+    is_open: bool
+
+
+@dataclass
+class DepthResponse:
+    """Response for an order book depth query.
+
+    Attributes:
+        instrument: The queried instrument.
+        levels: Depth levels keyed by "bids" and "asks", or None if
+            the instrument is unknown.
+    """
+    instrument: str
+    levels: dict[str, list] | None
+
+
+@dataclass
+class OrderQueryResponse:
+    """Response for a single order query.
+
+    Flat order fields are None when the order is not found, following
+    the same pattern as OrderMessageResponse.
+
+    Attributes:
+        order_id: The queried order ID.
+        found: Whether the order was found.
+    """
+    order_id: int
+    found: bool
+    order_status: OrderStatus | None = None
+    instrument: str | None = None
+    side: Side | None = None
+    order_type: OrderType | None = None
+    price: Decimal | None = None
+    quantity: Decimal | None = None
+    remaining_quantity: Decimal | None = None
+    filled_quantity: Decimal | None = None
+    creation_timestamp: int | None = None
+    last_modified_timestamp: int | None = None
+
+
+@dataclass
+class TransactionsResponse:
+    """Response for a transactions query.
+
+    Attributes:
+        transactions: List of Transaction records.
+    """
+    transactions: list

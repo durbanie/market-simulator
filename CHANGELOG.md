@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.1.8 — DMA Client
+
+- Add `DMAClient` ABC in `exchange/client/dma_client.py`: base class owns all exchange communication (calls exchange, stores `participant_id`, builds query responses), dispatches to abstract `_on_*` response callbacks that subclasses override
+- Add `LocalDMAClient` in `exchange/client/local_dma_client.py`: externally controllable puppet with no-op callbacks; field-level convenience methods (`submit_order`, `modify_order`, `cancel_order`) for CSV-driven runner use; inherits `register` and query methods from base
+- Single registration per client: `register()` raises `RuntimeError` on second call
+- Base class sets `participant_id` on all outgoing `OrderMessageRequest`s
+- Add query response dataclasses in `core/messages.py`: `ExchangeStatusResponse`, `DepthResponse`, `OrderQueryResponse`, `TransactionsResponse`
+- 16 new tests covering registration, order lifecycle, query methods, and invariant enforcement
+
 ## v1.1.7 — Order matching engine
 
 - Add `_match_order` to `Exchange`: fills incoming orders against resting orders at the maker's price, computes maker/taker fees, creates `Transaction` records
