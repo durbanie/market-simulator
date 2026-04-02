@@ -6,12 +6,10 @@ import pytest
 
 from market_simulator.core.clock import Clock, ClockMode
 from market_simulator.core.exchange_enums import (
-    Action,
     OrderType,
     RequestStatus,
     Side,
 )
-from market_simulator.core.messages import OrderMessageRequest
 from market_simulator.exchange.client.local_dma_client import LocalDMAClient
 from market_simulator.exchange.exchange import Exchange, ExchangeConfig
 
@@ -108,7 +106,7 @@ class TestOrderSubmission:
         )
 
         # Verify the order is owned by this client's participant.
-        order_resp = client.get_order(resp.order_id, instrument="XYZ")
+        order_resp = client.query_order(resp.order_id, instrument="XYZ")
         assert order_resp.found is True
 
 
@@ -188,26 +186,26 @@ class TestOrderLifecycle:
         assert buy_resp.filled_quantity == Decimal("5")
 
 
-# -- Query methods (inherited from base) --------------------------------------
+# -- Query methods ------------------------------------------------------------
 
 
 class TestQueryMethods:
 
-    def test_get_exchange_status_open(self) -> None:
+    def test_query_exchange_status_open(self) -> None:
         client, _ = _make_client()
-        resp = client.get_exchange_status()
+        resp = client.query_exchange_status()
         assert resp.is_open is True
 
-    def test_get_exchange_status_closed(self) -> None:
+    def test_query_exchange_status_closed(self) -> None:
         config = ExchangeConfig(instruments=["XYZ"])
         clock = Clock(mode=ClockMode.FAST_SIMULATION)
         exchange = Exchange(config, clock)
         client = LocalDMAClient(exchange)
 
-        resp = client.get_exchange_status()
+        resp = client.query_exchange_status()
         assert resp.is_open is False
 
-    def test_get_depth(self) -> None:
+    def test_query_depth(self) -> None:
         client, _ = _make_client()
         client.register()
 
@@ -219,7 +217,7 @@ class TestQueryMethods:
             quantity=Decimal("10"),
         )
 
-        resp = client.get_depth("XYZ", 5)
+        resp = client.query_depth("XYZ", 5)
 
         assert resp.instrument == "XYZ"
         assert resp.levels is not None
@@ -228,12 +226,12 @@ class TestQueryMethods:
         assert price == Decimal("100")
         assert quantity == Decimal("10")
 
-    def test_get_depth_unknown_instrument(self) -> None:
+    def test_query_depth_unknown_instrument(self) -> None:
         client, _ = _make_client()
-        resp = client.get_depth("UNKNOWN", 5)
+        resp = client.query_depth("UNKNOWN", 5)
         assert resp.levels is None
 
-    def test_get_order_found(self) -> None:
+    def test_query_order_found(self) -> None:
         client, _ = _make_client()
         client.register()
 
@@ -245,7 +243,7 @@ class TestQueryMethods:
             quantity=Decimal("10"),
         )
 
-        resp = client.get_order(submit_resp.order_id, instrument="XYZ")
+        resp = client.query_order(submit_resp.order_id, instrument="XYZ")
 
         assert resp.found is True
         assert resp.order_id == submit_resp.order_id
@@ -254,15 +252,15 @@ class TestQueryMethods:
         assert resp.remaining_quantity == Decimal("10")
         assert resp.filled_quantity == Decimal("0")
 
-    def test_get_order_not_found(self) -> None:
+    def test_query_order_not_found(self) -> None:
         client, _ = _make_client()
-        resp = client.get_order(9999)
+        resp = client.query_order(9999)
 
         assert resp.found is False
         assert resp.order_id == 9999
         assert resp.order_status is None
 
-    def test_get_transactions(self) -> None:
+    def test_query_transactions(self) -> None:
         config = ExchangeConfig(instruments=["XYZ"])
         clock = Clock(mode=ClockMode.FAST_SIMULATION)
         exchange = Exchange(config, clock)
@@ -287,7 +285,7 @@ class TestQueryMethods:
             quantity=Decimal("5"),
         )
 
-        resp = buyer.get_transactions()
+        resp = buyer.query_transactions()
 
         assert len(resp.transactions) == 1
         txn = resp.transactions[0]

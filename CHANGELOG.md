@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.1.9 — Query request dataclasses
+
+- Add request dataclasses to pair with each query response: `ExchangeStatusRequest`, `DepthRequest`, `OrderQueryRequest`, `TransactionsRequest` in `core/messages.py`
+- `DMAClient` base class query methods now accept request objects instead of loose parameters
+- `LocalDMAClient` adds field-level query convenience methods: `query_exchange_status`, `query_depth`, `query_order`, `query_transactions`
+
 ## v1.1.8 — DMA Client
 
 - Add `DMAClient` ABC in `exchange/client/dma_client.py`: base class owns all exchange communication (calls exchange, stores `participant_id`, builds query responses), dispatches to abstract `_on_*` response callbacks that subclasses override

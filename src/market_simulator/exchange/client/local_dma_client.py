@@ -12,12 +12,16 @@ from market_simulator.core.exchange_enums import (
     Side,
 )
 from market_simulator.core.messages import (
+    DepthRequest,
     DepthResponse,
+    ExchangeStatusRequest,
     ExchangeStatusResponse,
     OrderMessageRequest,
     OrderMessageResponse,
+    OrderQueryRequest,
     OrderQueryResponse,
     RegistrationResponse,
+    TransactionsRequest,
     TransactionsResponse,
 )
 from market_simulator.exchange.client.dma_client import DMAClient
@@ -27,11 +31,9 @@ from market_simulator.exchange.exchange import Exchange
 class LocalDMAClient(DMAClient):
     """Puppet DMA client for in-process use.
 
-    Inherits ``register``, ``get_exchange_status``, ``get_depth``,
-    ``get_order``, and ``get_transactions`` from the base class.
-    Adds ``submit_order``, ``modify_order``, and ``cancel_order``
-    that accept individual fields so the runner can pass CSV values
-    directly without constructing ``OrderMessageRequest`` objects.
+    Inherits ``register`` from the base class.  Adds field-level
+    convenience methods for orders and queries so the runner can pass
+    CSV values directly without constructing request objects.
 
     Args:
         exchange: The exchange instance to interact with.
@@ -89,6 +91,40 @@ class LocalDMAClient(DMAClient):
             participant_id=0,  # set by base class
             order_id=order_id,
             instrument=instrument,
+        ))
+
+    # -- Query convenience methods (field-level API) ----------------------------
+
+    def query_exchange_status(self) -> ExchangeStatusResponse:
+        """Query whether the exchange is open."""
+        return self.get_exchange_status(ExchangeStatusRequest(
+            participant_id=self._participant_id or 0,
+        ))
+
+    def query_depth(
+        self, instrument: str, levels: int,
+    ) -> DepthResponse:
+        """Query order book depth for an instrument."""
+        return self.get_depth(DepthRequest(
+            participant_id=self._participant_id or 0,
+            instrument=instrument,
+            levels=levels,
+        ))
+
+    def query_order(
+        self, order_id: int, instrument: str | None = None,
+    ) -> OrderQueryResponse:
+        """Query a single order by ID."""
+        return self.get_order(OrderQueryRequest(
+            participant_id=self._participant_id or 0,
+            order_id=order_id,
+            instrument=instrument,
+        ))
+
+    def query_transactions(self) -> TransactionsResponse:
+        """Query all transactions."""
+        return self.get_transactions(TransactionsRequest(
+            participant_id=self._participant_id or 0,
         ))
 
     # -- Response callbacks (no-ops for puppet) --------------------------------

@@ -86,6 +86,16 @@ class RegistrationResponse:
 
 
 @dataclass
+class ExchangeStatusRequest:
+    """Request for the exchange's current operational status.
+
+    Attributes:
+        participant_id: The requesting participant's ID.
+    """
+    participant_id: int
+
+
+@dataclass
 class ExchangeStatusResponse:
     """Response for an exchange status query.
 
@@ -93,6 +103,20 @@ class ExchangeStatusResponse:
         is_open: Whether the exchange is currently accepting orders.
     """
     is_open: bool
+
+
+@dataclass
+class DepthRequest:
+    """Request for order book depth on an instrument.
+
+    Attributes:
+        participant_id: The requesting participant's ID.
+        instrument: The ticker symbol to query.
+        levels: Number of price levels to return per side.
+    """
+    participant_id: int
+    instrument: str
+    levels: int
 
 
 @dataclass
@@ -106,6 +130,20 @@ class DepthResponse:
     """
     instrument: str
     levels: dict[str, list] | None
+
+
+@dataclass
+class OrderQueryRequest:
+    """Request for a single order's state.
+
+    Attributes:
+        participant_id: The requesting participant's ID.
+        order_id: The order to look up.
+        instrument: Optional instrument to narrow the search.
+    """
+    participant_id: int
+    order_id: int
+    instrument: str | None = None
 
 
 @dataclass
@@ -131,6 +169,16 @@ class OrderQueryResponse:
     filled_quantity: Decimal | None = None
     creation_timestamp: int | None = None
     last_modified_timestamp: int | None = None
+
+
+@dataclass
+class TransactionsRequest:
+    """Request for the list of all transactions.
+
+    Attributes:
+        participant_id: The requesting participant's ID.
+    """
+    participant_id: int
 
 
 @dataclass

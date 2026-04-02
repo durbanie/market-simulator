@@ -6,20 +6,18 @@ responses to abstract callback methods that subclasses override.
 """
 
 from abc import ABC, abstractmethod
-from decimal import Decimal
 
-from market_simulator.core.exchange_enums import (
-    Action,
-    OrderType,
-    Side,
-)
 from market_simulator.core.messages import (
+    DepthRequest,
     DepthResponse,
+    ExchangeStatusRequest,
     ExchangeStatusResponse,
     OrderMessageRequest,
     OrderMessageResponse,
+    OrderQueryRequest,
     OrderQueryResponse,
     RegistrationResponse,
+    TransactionsRequest,
     TransactionsResponse,
 )
 from market_simulator.exchange.exchange import Exchange
@@ -72,33 +70,39 @@ class DMAClient(ABC):
         self._on_order_message_response(response)
         return response
 
-    def get_exchange_status(self) -> ExchangeStatusResponse:
+    def get_exchange_status(
+        self, request: ExchangeStatusRequest,
+    ) -> ExchangeStatusResponse:
         """Query exchange status and dispatch to callback."""
         response = ExchangeStatusResponse(is_open=self._exchange.is_open)
         self._on_exchange_status_response(response)
         return response
 
     def get_depth(
-        self, instrument: str, levels: int,
+        self, request: DepthRequest,
     ) -> DepthResponse:
         """Query order book depth and dispatch to callback."""
-        depth = self._exchange.get_depth(instrument, levels)
-        response = DepthResponse(instrument=instrument, levels=depth)
+        depth = self._exchange.get_depth(request.instrument, request.levels)
+        response = DepthResponse(
+            instrument=request.instrument, levels=depth,
+        )
         self._on_depth_response(response)
         return response
 
     def get_order(
-        self, order_id: int, instrument: str | None = None,
+        self, request: OrderQueryRequest,
     ) -> OrderQueryResponse:
         """Query a single order and dispatch to callback."""
-        order = self._exchange.get_order(order_id, instrument)
+        order = self._exchange.get_order(
+            request.order_id, request.instrument,
+        )
         if order is None:
             response = OrderQueryResponse(
-                order_id=order_id, found=False,
+                order_id=request.order_id, found=False,
             )
         else:
             response = OrderQueryResponse(
-                order_id=order_id,
+                order_id=request.order_id,
                 found=True,
                 order_status=order.status,
                 instrument=order.instrument,
@@ -114,7 +118,9 @@ class DMAClient(ABC):
         self._on_order_query_response(response)
         return response
 
-    def get_transactions(self) -> TransactionsResponse:
+    def get_transactions(
+        self, request: TransactionsRequest,
+    ) -> TransactionsResponse:
         """Query all transactions and dispatch to callback."""
         txns = self._exchange.get_transactions()
         response = TransactionsResponse(transactions=txns)
