@@ -74,7 +74,7 @@ class DMAClient(ABC):
         self, request: ExchangeStatusRequest,
     ) -> ExchangeStatusResponse:
         """Query exchange status and dispatch to callback."""
-        response = ExchangeStatusResponse(is_open=self._exchange.is_open)
+        response = self._exchange.handle_exchange_status_request(request)
         self._on_exchange_status_response(response)
         return response
 
@@ -82,10 +82,7 @@ class DMAClient(ABC):
         self, request: DepthRequest,
     ) -> DepthResponse:
         """Query order book depth and dispatch to callback."""
-        depth = self._exchange.get_depth(request.instrument, request.levels)
-        response = DepthResponse(
-            instrument=request.instrument, levels=depth,
-        )
+        response = self._exchange.handle_depth_request(request)
         self._on_depth_response(response)
         return response
 
@@ -93,28 +90,7 @@ class DMAClient(ABC):
         self, request: OrderQueryRequest,
     ) -> OrderQueryResponse:
         """Query a single order and dispatch to callback."""
-        order = self._exchange.get_order(
-            request.order_id, request.instrument,
-        )
-        if order is None:
-            response = OrderQueryResponse(
-                order_id=request.order_id, found=False,
-            )
-        else:
-            response = OrderQueryResponse(
-                order_id=request.order_id,
-                found=True,
-                order_status=order.status,
-                instrument=order.instrument,
-                side=order.side,
-                order_type=order.order_type,
-                price=order.price,
-                quantity=order.quantity,
-                remaining_quantity=order.remaining_quantity,
-                filled_quantity=order.quantity - order.remaining_quantity,
-                creation_timestamp=order.creation_timestamp,
-                last_modified_timestamp=order.last_modified_timestamp,
-            )
+        response = self._exchange.handle_order_query_request(request)
         self._on_order_query_response(response)
         return response
 
@@ -122,8 +98,7 @@ class DMAClient(ABC):
         self, request: TransactionsRequest,
     ) -> TransactionsResponse:
         """Query all transactions and dispatch to callback."""
-        txns = self._exchange.get_transactions()
-        response = TransactionsResponse(transactions=txns)
+        response = self._exchange.handle_transactions_request(request)
         self._on_transactions_response(response)
         return response
 

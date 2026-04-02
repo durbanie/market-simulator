@@ -14,9 +14,17 @@ from market_simulator.core.exchange_enums import (
     Side,
 )
 from market_simulator.core.messages import (
+    DepthRequest,
+    DepthResponse,
+    ExchangeStatusRequest,
+    ExchangeStatusResponse,
     OrderMessageRequest,
     OrderMessageResponse,
+    OrderQueryRequest,
+    OrderQueryResponse,
     RegistrationResponse,
+    TransactionsRequest,
+    TransactionsResponse,
 )
 from market_simulator.exchange.data import Order, Transaction
 from market_simulator.exchange.order_book import DepthLevel, OrderBook
@@ -408,26 +416,53 @@ class Exchange:
         order.last_modified_timestamp = self._clock.now()
         return self._order_response(RequestStatus.CANCELLED, order)
 
-    # -- Query methods ------------------------------------------------------
+    # -- Query handlers -------------------------------------------------------
 
-    def get_transactions(self) -> list[Transaction]:
+    def handle_exchange_status_request(
+        self, request: ExchangeStatusRequest,
+    ) -> ExchangeStatusResponse:
+        """Return the current exchange operational status."""
+        return ExchangeStatusResponse(is_open=self.is_open)
+
+    def handle_depth_request(
+        self, request: DepthRequest,
+    ) -> DepthResponse:
+        """Return order book depth for an instrument."""
+        book = self._order_books.get(request.instrument)
+        levels = None if book is None else book.get_depth(request.levels)
+        return DepthResponse(
+            instrument=request.instrument, levels=levels,
+        )
+
+    def handle_order_query_request(
+        self, request: OrderQueryRequest,
+    ) -> OrderQueryResponse:
+        """Look up an order by ID and return its state."""
+        order = self._find_order(request.order_id, request.instrument)
+        if order is None:
+            return OrderQueryResponse(
+                order_id=request.order_id, found=False,
+            )
+        return OrderQueryResponse(
+            order_id=request.order_id,
+            found=True,
+            order_status=order.status,
+            instrument=order.instrument,
+            side=order.side,
+            order_type=order.order_type,
+            price=order.price,
+            quantity=order.quantity,
+            remaining_quantity=order.remaining_quantity,
+            filled_quantity=order.quantity - order.remaining_quantity,
+            creation_timestamp=order.creation_timestamp,
+            last_modified_timestamp=order.last_modified_timestamp,
+        )
+
+    def handle_transactions_request(
+        self, request: TransactionsRequest,
+    ) -> TransactionsResponse:
         """Return the list of all transactions."""
-        return list(self._transactions)
-
-    def get_depth(
-        self, instrument: str, levels: int,
-    ) -> dict[str, list[DepthLevel]] | None:
-        """Return order book depth for an instrument, or None if unknown."""
-        book = self._order_books.get(instrument)
-        if book is None:
-            return None
-        return book.get_depth(levels)
-
-    def get_order(
-        self, order_id: int, instrument: str | None = None,
-    ) -> Order | None:
-        """Look up an order by ID, optionally scoped to an instrument."""
-        return self._find_order(order_id, instrument)
+        return TransactionsResponse(transactions=list(self._transactions))
 
     # -- Internal helpers ---------------------------------------------------
 

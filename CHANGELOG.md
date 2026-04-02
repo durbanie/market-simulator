@@ -1,10 +1,13 @@
 # Changelog
 
-## v1.1.9 — Query request dataclasses
+## v1.1.9 — Query request/response symmetry
 
 - Add request dataclasses to pair with each query response: `ExchangeStatusRequest`, `DepthRequest`, `OrderQueryRequest`, `TransactionsRequest` in `core/messages.py`
-- `DMAClient` base class query methods now accept request objects instead of loose parameters
+- Add `handle_*` methods on `Exchange` for each query type: `handle_exchange_status_request`, `handle_depth_request`, `handle_order_query_request`, `handle_transactions_request` — these unwrap the request, formulate the response, and return it
+- Remove old `get_depth`, `get_order`, `get_transactions` methods from `Exchange` — all query communication now goes through the request/response handle methods
+- `DMAClient` base class query methods now accept request objects and call the exchange's handle methods
 - `LocalDMAClient` adds field-level query convenience methods: `query_exchange_status`, `query_depth`, `query_order`, `query_transactions`
+- `OrderQueryResponse` construction moved from `DMAClient` to `Exchange.handle_order_query_request`
 
 ## v1.1.8 — DMA Client
 
