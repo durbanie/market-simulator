@@ -68,19 +68,17 @@ class TestRegistration:
 
 class TestOrderSubmission:
 
-    def test_submit_order_via_client(self) -> None:
+    def test_submit_order(self) -> None:
         client, _ = _make_client()
         client.register()
 
-        resp = client.send_order_message(OrderMessageRequest(
-            action=Action.SUBMIT,
-            participant_id=0,  # overwritten by client
+        resp = client.submit_order(
             instrument="XYZ",
             side=Side.BUY,
             order_type=OrderType.LIMIT,
             price=Decimal("100"),
             quantity=Decimal("10"),
-        ))
+        )
 
         assert resp.request_status == RequestStatus.ACCEPTED
 
@@ -88,33 +86,30 @@ class TestOrderSubmission:
         client, _ = _make_client()
 
         with pytest.raises(RuntimeError, match="must register"):
-            client.send_order_message(OrderMessageRequest(
-                action=Action.SUBMIT,
-                participant_id=0,
+            client.submit_order(
                 instrument="XYZ",
                 side=Side.BUY,
                 order_type=OrderType.LIMIT,
                 price=Decimal("100"),
                 quantity=Decimal("10"),
-            ))
+            )
 
-    def test_client_sets_participant_id_on_request(self) -> None:
+    def test_submit_sets_participant_id(self) -> None:
+        """The base class sets participant_id on the request."""
         client, _ = _make_client()
         client.register()
-        pid = client.participant_id
 
-        request = OrderMessageRequest(
-            action=Action.SUBMIT,
-            participant_id=999,  # should be overwritten
+        resp = client.submit_order(
             instrument="XYZ",
             side=Side.BUY,
             order_type=OrderType.LIMIT,
             price=Decimal("100"),
             quantity=Decimal("10"),
         )
-        client.send_order_message(request)
 
-        assert request.participant_id == pid
+        # Verify the order is owned by this client's participant.
+        order_resp = client.get_order(resp.order_id, instrument="XYZ")
+        assert order_resp.found is True
 
 
 # -- Order lifecycle ----------------------------------------------------------
@@ -122,51 +117,43 @@ class TestOrderSubmission:
 
 class TestOrderLifecycle:
 
-    def test_submit_and_cancel_via_client(self) -> None:
+    def test_submit_and_cancel(self) -> None:
         client, _ = _make_client()
         client.register()
 
-        submit_resp = client.send_order_message(OrderMessageRequest(
-            action=Action.SUBMIT,
-            participant_id=0,
+        submit_resp = client.submit_order(
             instrument="XYZ",
             side=Side.BUY,
             order_type=OrderType.LIMIT,
             price=Decimal("100"),
             quantity=Decimal("10"),
-        ))
+        )
 
-        cancel_resp = client.send_order_message(OrderMessageRequest(
-            action=Action.CANCEL,
-            participant_id=0,
+        cancel_resp = client.cancel_order(
             order_id=submit_resp.order_id,
             instrument="XYZ",
-        ))
+        )
 
         assert cancel_resp.request_status == RequestStatus.CANCELLED
 
-    def test_submit_and_modify_via_client(self) -> None:
+    def test_submit_and_modify(self) -> None:
         client, _ = _make_client()
         client.register()
 
-        submit_resp = client.send_order_message(OrderMessageRequest(
-            action=Action.SUBMIT,
-            participant_id=0,
+        submit_resp = client.submit_order(
             instrument="XYZ",
             side=Side.BUY,
             order_type=OrderType.LIMIT,
             price=Decimal("100"),
             quantity=Decimal("10"),
-        ))
+        )
 
-        modify_resp = client.send_order_message(OrderMessageRequest(
-            action=Action.MODIFY,
-            participant_id=0,
+        modify_resp = client.modify_order(
             order_id=submit_resp.order_id,
             instrument="XYZ",
             price=Decimal("105"),
             quantity=Decimal("10"),
-        ))
+        )
 
         assert modify_resp.request_status == RequestStatus.MODIFIED_PRIORITY_RESET
         assert modify_resp.price == Decimal("105")
@@ -182,32 +169,26 @@ class TestOrderLifecycle:
         buyer.register()
         seller.register()
 
-        # Seller posts an ask.
-        sell_resp = seller.send_order_message(OrderMessageRequest(
-            action=Action.SUBMIT,
-            participant_id=0,
+        sell_resp = seller.submit_order(
             instrument="XYZ",
             side=Side.SELL,
             order_type=OrderType.LIMIT,
             price=Decimal("50"),
             quantity=Decimal("5"),
-        ))
+        )
         assert sell_resp.request_status == RequestStatus.ACCEPTED
 
-        # Buyer crosses with a market order.
-        buy_resp = buyer.send_order_message(OrderMessageRequest(
-            action=Action.SUBMIT,
-            participant_id=0,
+        buy_resp = buyer.submit_order(
             instrument="XYZ",
             side=Side.BUY,
             order_type=OrderType.MARKET,
             quantity=Decimal("5"),
-        ))
+        )
         assert buy_resp.request_status == RequestStatus.FILLED
         assert buy_resp.filled_quantity == Decimal("5")
 
 
-# -- Query methods ------------------------------------------------------------
+# -- Query methods (inherited from base) --------------------------------------
 
 
 class TestQueryMethods:
@@ -221,7 +202,6 @@ class TestQueryMethods:
         config = ExchangeConfig(instruments=["XYZ"])
         clock = Clock(mode=ClockMode.FAST_SIMULATION)
         exchange = Exchange(config, clock)
-        # Exchange starts closed by default.
         client = LocalDMAClient(exchange)
 
         resp = client.get_exchange_status()
@@ -231,15 +211,13 @@ class TestQueryMethods:
         client, _ = _make_client()
         client.register()
 
-        client.send_order_message(OrderMessageRequest(
-            action=Action.SUBMIT,
-            participant_id=0,
+        client.submit_order(
             instrument="XYZ",
             side=Side.BUY,
             order_type=OrderType.LIMIT,
             price=Decimal("100"),
             quantity=Decimal("10"),
-        ))
+        )
 
         resp = client.get_depth("XYZ", 5)
 
@@ -259,15 +237,13 @@ class TestQueryMethods:
         client, _ = _make_client()
         client.register()
 
-        submit_resp = client.send_order_message(OrderMessageRequest(
-            action=Action.SUBMIT,
-            participant_id=0,
+        submit_resp = client.submit_order(
             instrument="XYZ",
             side=Side.BUY,
             order_type=OrderType.LIMIT,
             price=Decimal("100"),
             quantity=Decimal("10"),
-        ))
+        )
 
         resp = client.get_order(submit_resp.order_id, instrument="XYZ")
 
@@ -297,24 +273,19 @@ class TestQueryMethods:
         buyer.register()
         seller.register()
 
-        # Create a fill.
-        seller.send_order_message(OrderMessageRequest(
-            action=Action.SUBMIT,
-            participant_id=0,
+        seller.submit_order(
             instrument="XYZ",
             side=Side.SELL,
             order_type=OrderType.LIMIT,
             price=Decimal("50"),
             quantity=Decimal("5"),
-        ))
-        buyer.send_order_message(OrderMessageRequest(
-            action=Action.SUBMIT,
-            participant_id=0,
+        )
+        buyer.submit_order(
             instrument="XYZ",
             side=Side.BUY,
             order_type=OrderType.MARKET,
             quantity=Decimal("5"),
-        ))
+        )
 
         resp = buyer.get_transactions()
 

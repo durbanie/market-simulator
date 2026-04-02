@@ -6,7 +6,13 @@ responses to abstract callback methods that subclasses override.
 """
 
 from abc import ABC, abstractmethod
+from decimal import Decimal
 
+from market_simulator.core.exchange_enums import (
+    Action,
+    OrderType,
+    Side,
+)
 from market_simulator.core.messages import (
     DepthResponse,
     ExchangeStatusResponse,
@@ -23,10 +29,7 @@ class DMAClient(ABC):
     """Base DMA client for exchange interaction.
 
     Handles all exchange communication directly.  Subclasses implement
-    abstract ``_on_*`` callback methods to react to responses, and
-    expose whatever public API suits their use case (e.g. a puppet
-    client exposes ``register()`` for the runner to call; a smart
-    participant might call ``_register()`` internally).
+    abstract ``_on_*`` callback methods to react to responses.
 
     Args:
         exchange: The exchange instance to communicate with.
@@ -43,8 +46,8 @@ class DMAClient(ABC):
 
     # -- Exchange communication (concrete) ------------------------------------
 
-    def _register(self) -> RegistrationResponse:
-        """Call the exchange to register, store participant_id, and
+    def register(self) -> RegistrationResponse:
+        """Register with the exchange, store participant_id, and
         dispatch to the ``_on_registration_response`` callback.
 
         May only be called once per client.
@@ -56,7 +59,7 @@ class DMAClient(ABC):
         self._on_registration_response(response)
         return response
 
-    def _send_order_message(
+    def send_order_message(
         self, request: OrderMessageRequest,
     ) -> OrderMessageResponse:
         """Set participant_id on the request, send it to the exchange,
@@ -69,13 +72,13 @@ class DMAClient(ABC):
         self._on_order_message_response(response)
         return response
 
-    def _query_exchange_status(self) -> ExchangeStatusResponse:
+    def get_exchange_status(self) -> ExchangeStatusResponse:
         """Query exchange status and dispatch to callback."""
         response = ExchangeStatusResponse(is_open=self._exchange.is_open)
         self._on_exchange_status_response(response)
         return response
 
-    def _query_depth(
+    def get_depth(
         self, instrument: str, levels: int,
     ) -> DepthResponse:
         """Query order book depth and dispatch to callback."""
@@ -84,7 +87,7 @@ class DMAClient(ABC):
         self._on_depth_response(response)
         return response
 
-    def _query_order(
+    def get_order(
         self, order_id: int, instrument: str | None = None,
     ) -> OrderQueryResponse:
         """Query a single order and dispatch to callback."""
@@ -111,7 +114,7 @@ class DMAClient(ABC):
         self._on_order_query_response(response)
         return response
 
-    def _query_transactions(self) -> TransactionsResponse:
+    def get_transactions(self) -> TransactionsResponse:
         """Query all transactions and dispatch to callback."""
         txns = self._exchange.get_transactions()
         response = TransactionsResponse(transactions=txns)
