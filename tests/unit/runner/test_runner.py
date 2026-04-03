@@ -235,8 +235,94 @@ class TestRunnerPrinting:
 
         text = output.getvalue()
         assert "Depth" in text
-        assert "bids" in text
-        assert "asks" in text
+        assert "bid" in text
+        assert "ask" in text
+
+    def test_depth_asks_printed_highest_first(self, tmp_path) -> None:
+        rows = [
+            "1000,SUBMIT,1,XYZ,SELL,LIMIT,200,5,",
+            "2000,SUBMIT,2,XYZ,SELL,LIMIT,300,3,",
+            "3000,SUBMIT,1,XYZ,BUY,LIMIT,100,10,",
+        ]
+        csv_path = _write_csv(tmp_path, rows)
+        config = _make_config(
+            csv_path,
+            print_config=PrintConfig(depth_every_n=3),
+        )
+        output = io.StringIO()
+        runner = Runner(config, output=output)
+        runner.run()
+
+        lines = output.getvalue().splitlines()
+        ask_lines = [l for l in lines if l.strip().startswith("ask")]
+        assert len(ask_lines) == 2
+        # Highest ask should appear first.
+        assert "300" in ask_lines[0]
+        assert "200" in ask_lines[1]
+
+    def test_depth_volume_and_depth_columns(self, tmp_path) -> None:
+        rows = [
+            "1000,SUBMIT,1,XYZ,BUY,LIMIT,100,10,",
+            "2000,SUBMIT,2,XYZ,BUY,LIMIT,99,5,",
+            "3000,SUBMIT,1,XYZ,SELL,LIMIT,200,3,",
+        ]
+        csv_path = _write_csv(tmp_path, rows)
+        config = _make_config(
+            csv_path,
+            print_config=PrintConfig(depth_every_n=3),
+        )
+        output = io.StringIO()
+        runner = Runner(config, output=output)
+        runner.run()
+
+        lines = output.getvalue().splitlines()
+        # Header row should contain volume and depth.
+        header = [l for l in lines if "volume" in l and "depth" in l]
+        assert len(header) == 1
+
+        bid_lines = [l for l in lines if l.strip().startswith("bid")]
+        # Best bid (100, qty=10): volume=10, depth=10.
+        assert "10" in bid_lines[0]
+        # Second bid (99, qty=5): volume=5, depth=15.
+        parts = bid_lines[1].split()
+        assert parts[-2] == "5"   # volume
+        assert parts[-1] == "15"  # cumulative depth
+
+    def test_depth_last_txn_price_shown(self, tmp_path) -> None:
+        rows = [
+            "1000,SUBMIT,1,XYZ,SELL,LIMIT,50,5,",
+            "2000,SUBMIT,2,XYZ,BUY,MARKET,,5,",
+            "3000,SUBMIT,1,XYZ,SELL,LIMIT,60,5,",
+        ]
+        csv_path = _write_csv(tmp_path, rows)
+        config = _make_config(
+            csv_path,
+            print_config=PrintConfig(depth_every_n=3),
+        )
+        output = io.StringIO()
+        runner = Runner(config, output=output)
+        runner.run()
+
+        text = output.getvalue()
+        assert "last txn price: 50" in text
+
+    def test_depth_last_txn_price_none_when_no_transactions(self, tmp_path) -> None:
+        rows = [
+            "1000,SUBMIT,1,XYZ,BUY,LIMIT,100,10,",
+            "2000,SUBMIT,2,XYZ,SELL,LIMIT,200,5,",
+            "3000,SUBMIT,1,XYZ,BUY,LIMIT,99,3,",
+        ]
+        csv_path = _write_csv(tmp_path, rows)
+        config = _make_config(
+            csv_path,
+            print_config=PrintConfig(depth_every_n=3),
+        )
+        output = io.StringIO()
+        runner = Runner(config, output=output)
+        runner.run()
+
+        text = output.getvalue()
+        assert "last txn price: (none)" in text
 
     def test_no_print_when_disabled(self, tmp_path) -> None:
         rows = [
