@@ -193,6 +193,7 @@ class TestQueryMethods:
 
     def test_query_exchange_status_open(self) -> None:
         client, _ = _make_client()
+        client.register()
         resp = client.query_exchange_status()
         assert resp.is_open is True
 
@@ -201,6 +202,7 @@ class TestQueryMethods:
         clock = Clock(mode=ClockMode.FAST_SIMULATION)
         exchange = Exchange(config, clock)
         client = LocalDMAClient(exchange)
+        client.register()
 
         resp = client.query_exchange_status()
         assert resp.is_open is False
@@ -228,6 +230,7 @@ class TestQueryMethods:
 
     def test_query_depth_unknown_instrument(self) -> None:
         client, _ = _make_client()
+        client.register()
         resp = client.query_depth("UNKNOWN", 5)
         assert resp.levels is None
 
@@ -254,6 +257,7 @@ class TestQueryMethods:
 
     def test_query_order_not_found(self) -> None:
         client, _ = _make_client()
+        client.register()
         resp = client.query_order(9999)
 
         assert resp.found is False

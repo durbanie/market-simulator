@@ -74,10 +74,10 @@ def _submit_market(
     ))
 
 
-def _get_depth(ex: Exchange, instrument: str, levels: int):
+def _get_depth(ex: Exchange, pid: int, instrument: str, levels: int):
     """Query depth via the handle method and return the levels dict (or None)."""
     return ex.handle_depth_request(
-        DepthRequest(participant_id=0, instrument=instrument, levels=levels),
+        DepthRequest(participant_id=pid, instrument=instrument, levels=levels),
     ).levels
 
 
@@ -91,10 +91,10 @@ def _get_order(ex: Exchange, order_id: int, instrument: str | None = None):
     return ex._find_order(order_id, instrument)
 
 
-def _get_transactions(ex: Exchange):
+def _get_transactions(ex: Exchange, pid: int):
     """Query transactions via the handle method and return the list."""
     return ex.handle_transactions_request(
-        TransactionsRequest(participant_id=0),
+        TransactionsRequest(participant_id=pid),
     ).transactions
 
 
@@ -177,7 +177,7 @@ class TestSubmitOrder:
         ex.open()
         pid = _register(ex)
         _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50.00"), Decimal("10"))
-        depth = _get_depth(ex,"XYZ", 5)
+        depth = _get_depth(ex, pid, "XYZ", 5)
         assert depth["bids"] == [(Decimal("50.00"), Decimal("10"))]
 
     def test_market_order_does_not_appear_on_book(self):
@@ -185,7 +185,7 @@ class TestSubmitOrder:
         ex.open()
         pid = _register(ex)
         _submit_market(ex, pid, "XYZ", Side.BUY, Decimal("10"))
-        depth = _get_depth(ex,"XYZ", 5)
+        depth = _get_depth(ex, pid, "XYZ", 5)
         assert depth["bids"] == []
 
     def test_accepted_order_retrievable_via_get_order(self):
@@ -287,7 +287,7 @@ class TestRejections:
         pid = _register(ex)
         _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
         ex.open()
-        depth = _get_depth(ex,"XYZ", 5)
+        depth = _get_depth(ex, pid, "XYZ", 5)
         assert depth["bids"] == []
 
     def test_rejected_order_still_gets_order_id(self):
@@ -334,7 +334,7 @@ class TestModifyOrder:
         ))
         assert resp.request_status == RequestStatus.MODIFIED
         # Total depth should be 80 + 100 = 180 at $50.
-        depth = _get_depth(ex,"XYZ", 5)
+        depth = _get_depth(ex, pid, "XYZ", 5)
         assert depth["bids"] == [(Decimal("50"), Decimal("180"))]
         order = _get_order(ex,r1.order_id)
         assert order.remaining_quantity == Decimal("80")
@@ -353,7 +353,7 @@ class TestModifyOrder:
         ))
         assert resp.request_status == RequestStatus.MODIFIED_PRIORITY_RESET
         # Total depth should be 150 + 100 = 250 at $50.
-        depth = _get_depth(ex,"XYZ", 5)
+        depth = _get_depth(ex, pid, "XYZ", 5)
         assert depth["bids"] == [(Decimal("50"), Decimal("250"))]
 
     def test_modify_price_change_loses_priority(self):
@@ -373,7 +373,7 @@ class TestModifyOrder:
         order = _get_order(ex,r1.order_id)
         assert order.price == Decimal("49")
         # Two price levels: $50 (100) and $49 (100).
-        depth = _get_depth(ex,"XYZ", 5)
+        depth = _get_depth(ex, pid, "XYZ", 5)
         assert depth["bids"] == [
             (Decimal("50"), Decimal("100")),
             (Decimal("49"), Decimal("100")),
@@ -584,7 +584,7 @@ class TestCancelOrder:
             participant_id=pid,
             order_id=r.order_id,
         ))
-        depth = _get_depth(ex,"XYZ", 5)
+        depth = _get_depth(ex, pid, "XYZ", 5)
         assert depth["bids"] == []
 
     def test_cancel_updates_timestamp(self):
@@ -678,28 +678,35 @@ class TestCancelOrder:
 class TestRequestHandlers:
     def test_handle_exchange_status_request(self):
         ex = _make_exchange()
+        pid = _register(ex)
         closed = ex.handle_exchange_status_request(
-            ExchangeStatusRequest(participant_id=0),
+            ExchangeStatusRequest(participant_id=pid),
         )
+        assert closed.request_status == RequestStatus.ACCEPTED
         assert closed.is_open is False
         ex.open()
         opened = ex.handle_exchange_status_request(
-            ExchangeStatusRequest(participant_id=0),
+            ExchangeStatusRequest(participant_id=pid),
         )
+        assert opened.request_status == RequestStatus.ACCEPTED
         assert opened.is_open is True
 
     def test_handle_transactions_request_empty(self):
         ex = _make_exchange()
+        pid = _register(ex)
         resp = ex.handle_transactions_request(
-            TransactionsRequest(participant_id=0),
+            TransactionsRequest(participant_id=pid),
         )
+        assert resp.request_status == RequestStatus.ACCEPTED
         assert resp.transactions == []
 
     def test_handle_depth_request_unknown_instrument(self):
         ex = _make_exchange(instruments=["XYZ"])
+        pid = _register(ex)
         resp = ex.handle_depth_request(
-            DepthRequest(participant_id=0, instrument="ABC", levels=5),
+            DepthRequest(participant_id=pid, instrument="ABC", levels=5),
         )
+        assert resp.request_status == RequestStatus.ACCEPTED
         assert resp.levels is None
 
     def test_handle_depth_request_multiple_instruments(self):
@@ -754,11 +761,49 @@ class TestRequestHandlers:
 
     def test_handle_order_query_request_not_found(self):
         ex = _make_exchange()
+        pid = _register(ex)
         resp = ex.handle_order_query_request(
-            OrderQueryRequest(participant_id=0, order_id=999),
+            OrderQueryRequest(participant_id=pid, order_id=999),
         )
+        assert resp.request_status == RequestStatus.ACCEPTED
         assert resp.found is False
         assert resp.order_id == 999
+
+    def test_reject_exchange_status_unregistered(self):
+        ex = _make_exchange()
+        resp = ex.handle_exchange_status_request(
+            ExchangeStatusRequest(participant_id=999),
+        )
+        assert resp.request_status == RequestStatus.REJECTED
+        assert resp.rejection_reason == RejectionReason.UNREGISTERED_PARTICIPANT
+        assert resp.is_open is None
+
+    def test_reject_depth_unregistered(self):
+        ex = _make_exchange()
+        resp = ex.handle_depth_request(
+            DepthRequest(participant_id=999, instrument="XYZ", levels=5),
+        )
+        assert resp.request_status == RequestStatus.REJECTED
+        assert resp.rejection_reason == RejectionReason.UNREGISTERED_PARTICIPANT
+        assert resp.levels is None
+
+    def test_reject_order_query_unregistered(self):
+        ex = _make_exchange()
+        resp = ex.handle_order_query_request(
+            OrderQueryRequest(participant_id=999, order_id=1),
+        )
+        assert resp.request_status == RequestStatus.REJECTED
+        assert resp.rejection_reason == RejectionReason.UNREGISTERED_PARTICIPANT
+        assert resp.found is False
+
+    def test_reject_transactions_unregistered(self):
+        ex = _make_exchange()
+        resp = ex.handle_transactions_request(
+            TransactionsRequest(participant_id=999),
+        )
+        assert resp.request_status == RequestStatus.REJECTED
+        assert resp.rejection_reason == RejectionReason.UNREGISTERED_PARTICIPANT
+        assert resp.transactions is None
 
 
 class TestMultipleInstruments:
@@ -768,8 +813,8 @@ class TestMultipleInstruments:
         pid = _register(ex)
         _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
         _submit_limit(ex, pid, "ABC", Side.BUY, Decimal("25"), Decimal("20"))
-        xyz = _get_depth(ex,"XYZ", 5)
-        abc = _get_depth(ex,"ABC", 5)
+        xyz = _get_depth(ex, pid, "XYZ", 5)
+        abc = _get_depth(ex, pid, "ABC", 5)
         assert len(xyz["bids"]) == 1
         assert len(abc["bids"]) == 1
         assert xyz["bids"][0] == (Decimal("50"), Decimal("10"))
@@ -792,7 +837,7 @@ class TestMatching:
         assert resp.order_status == OrderStatus.FILLED
         assert resp.remaining_quantity == Decimal("0")
         assert resp.filled_quantity == Decimal("10")
-        txns = _get_transactions(ex)
+        txns = _get_transactions(ex, maker)
         assert len(txns) == 1
         assert txns[0].price == Decimal("50.00")
         assert txns[0].quantity == Decimal("10")
@@ -807,7 +852,7 @@ class TestMatching:
         assert resp.request_status == RequestStatus.FILLED
         assert resp.order_status == OrderStatus.FILLED
         assert resp.filled_quantity == Decimal("10")
-        txns = _get_transactions(ex)
+        txns = _get_transactions(ex, maker)
         assert len(txns) == 1
         assert txns[0].price == Decimal("50.00")
 
@@ -821,7 +866,7 @@ class TestMatching:
         )
         resp = _submit_market(ex, taker, "XYZ", Side.BUY, Decimal("10"))
         assert resp.request_status == RequestStatus.FILLED
-        txns = _get_transactions(ex)
+        txns = _get_transactions(ex, maker)
         assert txns[0].price == Decimal("50.05")
 
     def test_market_order_fills_multiple_levels(self):
@@ -838,7 +883,7 @@ class TestMatching:
         resp = _submit_market(ex, taker, "XYZ", Side.BUY, Decimal("8"))
         assert resp.request_status == RequestStatus.FILLED
         assert resp.filled_quantity == Decimal("8")
-        txns = _get_transactions(ex)
+        txns = _get_transactions(ex, maker)
         assert len(txns) == 2
         # First fill at best price.
         assert txns[0].price == Decimal("50.00")
@@ -865,11 +910,11 @@ class TestMatching:
         assert resp.filled_quantity == Decimal("5")
         assert resp.remaining_quantity == Decimal("5")
         # Remainder rests on bid side at last fill price.
-        depth = _get_depth(ex,"XYZ", 5)
+        depth = _get_depth(ex, maker, "XYZ", 5)
         assert depth["bids"] == [(Decimal("50.00"), Decimal("5"))]
         assert depth["asks"] == []
         # One transaction for the filled portion.
-        txns = _get_transactions(ex)
+        txns = _get_transactions(ex, maker)
         assert len(txns) == 1
         assert txns[0].quantity == Decimal("5")
 
@@ -889,7 +934,7 @@ class TestMatching:
         assert resp.request_status == RequestStatus.ACCEPTED
         assert resp.filled_quantity == Decimal("6")
         assert resp.remaining_quantity == Decimal("4")
-        depth = _get_depth(ex,"XYZ", 5)
+        depth = _get_depth(ex, maker, "XYZ", 5)
         assert depth["bids"] == [(Decimal("50.10"), Decimal("4"))]
 
     def test_market_order_not_on_book_after_fill(self):
@@ -901,7 +946,7 @@ class TestMatching:
             ex, maker, "XYZ", Side.SELL, Decimal("50.00"), Decimal("10"),
         )
         _submit_market(ex, taker, "XYZ", Side.BUY, Decimal("10"))
-        depth = _get_depth(ex,"XYZ", 5)
+        depth = _get_depth(ex, maker, "XYZ", 5)
         assert depth["bids"] == []
         assert depth["asks"] == []
 
@@ -920,7 +965,7 @@ class TestMatching:
         )
         assert resp.request_status == RequestStatus.FILLED
         assert resp.order_status == OrderStatus.FILLED
-        txns = _get_transactions(ex)
+        txns = _get_transactions(ex, maker)
         assert len(txns) == 1
         assert txns[0].price == Decimal("50.05")
 
@@ -936,7 +981,7 @@ class TestMatching:
             ex, taker, "XYZ", Side.SELL, Decimal("50.05"), Decimal("10"),
         )
         assert resp.request_status == RequestStatus.FILLED
-        txns = _get_transactions(ex)
+        txns = _get_transactions(ex, maker)
         assert txns[0].price == Decimal("50.10")
 
     def test_crossing_limit_partial_fill_rests_remainder(self):
@@ -955,7 +1000,7 @@ class TestMatching:
         assert resp.filled_quantity == Decimal("5")
         assert resp.remaining_quantity == Decimal("5")
         # Remainder rests on bid side.
-        depth = _get_depth(ex,"XYZ", 5)
+        depth = _get_depth(ex, maker, "XYZ", 5)
         assert depth["bids"] == [(Decimal("50.10"), Decimal("5"))]
         assert depth["asks"] == []
 
@@ -971,8 +1016,8 @@ class TestMatching:
         )
         assert resp.request_status == RequestStatus.ACCEPTED
         assert resp.order_status == OrderStatus.ACCEPTED
-        assert _get_transactions(ex) == []
-        depth = _get_depth(ex,"XYZ", 5)
+        assert _get_transactions(ex, pid) == []
+        depth = _get_depth(ex, pid, "XYZ", 5)
         assert len(depth["bids"]) == 1
         assert len(depth["asks"]) == 1
 
@@ -992,7 +1037,7 @@ class TestMatching:
         )
         assert resp.request_status == RequestStatus.FILLED
         assert resp.filled_quantity == Decimal("5")
-        txns = _get_transactions(ex)
+        txns = _get_transactions(ex, maker)
         assert len(txns) == 2
         # FIFO: first resting fully filled (3), second partially (2).
         assert txns[0].quantity == Decimal("3")
@@ -1011,7 +1056,7 @@ class TestMatching:
             ex, maker, "XYZ", Side.SELL, Decimal("100.00"), Decimal("10"),
         )
         _submit_market(ex, taker, "XYZ", Side.BUY, Decimal("10"))
-        txn = _get_transactions(ex)[0]
+        txn = _get_transactions(ex, maker)[0]
         # maker_fee = 100 * 10 * -3 / 10000 = -0.30 (rebate)
         assert txn.maker_fee == Decimal("-0.30")
         # taker_fee = 100 * 10 * 7 / 10000 = 0.70
@@ -1029,7 +1074,7 @@ class TestMatching:
             ex, maker, "XYZ", Side.SELL, Decimal("60.00"), Decimal("5"),
         )
         _submit_market(ex, taker, "XYZ", Side.BUY, Decimal("10"))
-        txns = _get_transactions(ex)
+        txns = _get_transactions(ex, maker)
         # First fill: 50 * 5 * 7 / 10000 = 0.175
         assert txns[0].taker_fee == Decimal("0.175")
         # Second fill: 60 * 5 * 7 / 10000 = 0.21
@@ -1046,7 +1091,7 @@ class TestMatching:
             ex, maker, "XYZ", Side.SELL, Decimal("50.00"), Decimal("10"),
         )
         _submit_market(ex, taker, "XYZ", Side.BUY, Decimal("10"))
-        txn = _get_transactions(ex)[0]
+        txn = _get_transactions(ex, maker)[0]
         assert txn.transaction_id == 1
         assert txn.instrument == "XYZ"
         assert txn.price == Decimal("50.00")
@@ -1069,7 +1114,7 @@ class TestMatching:
             ex, maker, "XYZ", Side.SELL, Decimal("50.00"), Decimal("3"),
         )
         _submit_market(ex, taker, "XYZ", Side.BUY, Decimal("6"))
-        txns = _get_transactions(ex)
+        txns = _get_transactions(ex, maker)
         assert txns[0].transaction_id == 1
         assert txns[1].transaction_id == 2
 
@@ -1086,7 +1131,7 @@ class TestMatching:
             ex, pid, "XYZ", Side.BUY, Decimal("50.00"), Decimal("10"),
         )
         assert resp.request_status == RequestStatus.FILLED
-        txns = _get_transactions(ex)
+        txns = _get_transactions(ex, pid)
         assert len(txns) == 1
         assert txns[0].maker_participant_id == pid
         assert txns[0].taker_participant_id == pid
@@ -1099,8 +1144,8 @@ class TestMatching:
         _submit_limit(
             ex, maker, "XYZ", Side.SELL, Decimal("50.00"), Decimal("10"),
         )
-        depth_before = _get_depth(ex,"XYZ", 5)
+        depth_before = _get_depth(ex, maker, "XYZ", 5)
         assert len(depth_before["asks"]) == 1
         _submit_market(ex, taker, "XYZ", Side.BUY, Decimal("10"))
-        depth_after = _get_depth(ex,"XYZ", 5)
+        depth_after = _get_depth(ex, maker, "XYZ", 5)
         assert depth_after["asks"] == []

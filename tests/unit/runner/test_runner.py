@@ -145,7 +145,7 @@ class TestRunnerReplay:
         runner.run()
 
         resp = runner.exchange.handle_transactions_request(
-            TransactionsRequest(participant_id=0),
+            TransactionsRequest(participant_id=runner._query_client.participant_id),
         )
         assert len(resp.transactions) == 1
         assert resp.transactions[0].price == Decimal("50")
@@ -185,7 +185,7 @@ class TestRunnerReplay:
         runner.run()
 
         resp = runner.exchange.handle_transactions_request(
-            TransactionsRequest(participant_id=0),
+            TransactionsRequest(participant_id=runner._query_client.participant_id),
         )
         assert len(resp.transactions) == 1
 

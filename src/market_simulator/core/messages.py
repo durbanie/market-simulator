@@ -100,9 +100,13 @@ class ExchangeStatusResponse:
     """Response for an exchange status query.
 
     Attributes:
+        request_status: Outcome of the request.
+        rejection_reason: Set only when request_status is REJECTED.
         is_open: Whether the exchange is currently accepting orders.
     """
-    is_open: bool
+    request_status: RequestStatus
+    is_open: bool | None = None
+    rejection_reason: RejectionReason | None = None
 
 
 @dataclass
@@ -124,12 +128,16 @@ class DepthResponse:
     """Response for an order book depth query.
 
     Attributes:
+        request_status: Outcome of the request.
         instrument: The queried instrument.
         levels: Depth levels keyed by "bids" and "asks", or None if
             the instrument is unknown.
+        rejection_reason: Set only when request_status is REJECTED.
     """
+    request_status: RequestStatus
     instrument: str
-    levels: dict[str, list] | None
+    levels: dict[str, list] | None = None
+    rejection_reason: RejectionReason | None = None
 
 
 @dataclass
@@ -154,11 +162,15 @@ class OrderQueryResponse:
     the same pattern as OrderMessageResponse.
 
     Attributes:
+        request_status: Outcome of the request.
         order_id: The queried order ID.
         found: Whether the order was found.
+        rejection_reason: Set only when request_status is REJECTED.
     """
+    request_status: RequestStatus
     order_id: int
-    found: bool
+    found: bool = False
+    rejection_reason: RejectionReason | None = None
     order_status: OrderStatus | None = None
     instrument: str | None = None
     side: Side | None = None
@@ -186,6 +198,10 @@ class TransactionsResponse:
     """Response for a transactions query.
 
     Attributes:
+        request_status: Outcome of the request.
         transactions: List of Transaction records.
+        rejection_reason: Set only when request_status is REJECTED.
     """
-    transactions: list
+    request_status: RequestStatus
+    transactions: list | None = None
+    rejection_reason: RejectionReason | None = None
