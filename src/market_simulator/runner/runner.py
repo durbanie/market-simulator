@@ -144,13 +144,21 @@ class Runner:
 
     def _print_depth(self) -> None:
         """Print order book depth for configured instruments."""
-        from market_simulator.core.messages import DepthRequest
+        from market_simulator.core.messages import DepthRequest, TransactionsRequest
 
         pc = self._config.print_config
         instruments = (
             pc.depth_instruments
             if pc.depth_instruments is not None
             else self._config.exchange.instruments
+        )
+
+        # Get last transaction price.
+        txn_resp = self._exchange.handle_transactions_request(
+            TransactionsRequest(participant_id=0),
+        )
+        last_txn_price = (
+            txn_resp.transactions[-1].price if txn_resp.transactions else None
         )
 
         self._output.write(f"--- Depth (message {self._message_count}) ---\n")
@@ -166,12 +174,44 @@ class Runner:
             if resp.levels is None:
                 self._output.write("    (unknown instrument)\n")
                 continue
-            for side_label in ("asks", "bids"):
-                entries = resp.levels.get(side_label, [])
-                if entries:
-                    for price, qty in entries:
-                        self._output.write(
-                            f"    {side_label}: price={price} qty={qty}\n",
-                        )
-                else:
-                    self._output.write(f"    {side_label}: (empty)\n")
+
+            self._output.write("    side     price    volume    depth\n")
+
+            asks = resp.levels.get("asks", [])
+            bids = resp.levels.get("bids", [])
+
+            # Asks: reverse so highest is first, then compute depth
+            # bottom-up (from the ask nearest the spread).
+            if asks:
+                cumulative = Decimal(0)
+                depth_values = []
+                for _, qty in asks:
+                    cumulative += qty
+                    depth_values.append(cumulative)
+                for i, (price, qty) in enumerate(reversed(asks)):
+                    depth = depth_values[len(asks) - 1 - i]
+                    self._output.write(
+                        f"    ask   {price:>8}  {qty:>8}  {depth:>8}\n",
+                    )
+            else:
+                self._output.write("    ask   (empty)\n")
+
+            self._output.write("    -\n")
+            if last_txn_price is not None:
+                self._output.write(f"    last txn price: {last_txn_price}\n")
+            else:
+                self._output.write("    last txn price: (none)\n")
+            self._output.write("    -\n")
+
+            if bids:
+                cumulative = Decimal(0)
+                depth_values = []
+                for _, qty in bids:
+                    cumulative += qty
+                    depth_values.append(cumulative)
+                for i, (price, qty) in enumerate(bids):
+                    self._output.write(
+                        f"    bid   {price:>8}  {qty:>8}  {depth_values[i]:>8}\n",
+                    )
+            else:
+                self._output.write("    bid   (empty)\n")
