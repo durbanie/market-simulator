@@ -1,0 +1,24 @@
+{
+    "csv_path": "configs/actions/simple_run.csv",
+    "clock": {
+        "mode": "FAST_SIMULATION",
+        "offset_us": 0
+    },
+    "exchange": {
+        "instruments": ["XYZ"],
+        "maker_fee_bps": "-3",
+        "taker_fee_bps": "7",
+        "starting_order_id": 1,
+        "starting_transaction_id": 1,
+        "starting_participant_id": 1
+    },
+    "participants": {
+        "num_participants": 3
+    },
+    "print": {
+        "transactions_every_n": 1,
+        "depth_every_n": 5,
+        "depth_instruments": ["XYZ"],
+        "depth_levels": 3
+    }
+}

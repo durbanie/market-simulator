@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.1.10 — Runner and config
+
+- Add `RunnerConfig` and `PrintConfig` dataclasses in `runner/config.py` with `load_config()` for JSON parsing
+- Add `Runner` class in `runner/runner.py`: creates Clock, Exchange, and N LocalDMAClients from config; replays a time-ordered CSV of order messages through the exchange with clock advancement
+- Runner dispatches SUBMIT, MODIFY, and CANCEL actions to the correct client by participant ID
+- Optional printing of new transactions and order book depth at configurable message intervals
+- Runner accepts `output: IO[str]` parameter for testable output capture
+- 20 new tests: 5 for config loading, 15 for runner behavior (setup, replay, printing)
+
 ## v1.1.9 — Query request/response symmetry
 
 - Add request dataclasses to pair with each query response: `ExchangeStatusRequest`, `DepthRequest`, `OrderQueryRequest`, `TransactionsRequest` in `core/messages.py`

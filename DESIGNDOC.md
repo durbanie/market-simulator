@@ -136,8 +136,10 @@ We will build the simulation in multiple phases. The plan for these phases is as
 `│   ├── unit/`  
 `│   ├── e2e/`  
 `│   └── fixtures/  # e2e input/output files (JSON configs, CSV data)`  
+`├── bin/  # simulation entry points (e.g. run.py)`
 `├── scripts/  # utility scripts (e.g. order message CSV generation)`
-`├── configs/  # run configuration files`
+`├── configs/  # run configuration files (JSON configs, action CSVs)`
+`│   └── actions/  # time-ordered order message CSVs`
 `├── data/  # gitignored, Parquet output goes here by default`  
 `├── pyproject.toml`  
 `├── CHANGELOG.md`  
