@@ -44,6 +44,10 @@ class Runner:
             resp = client.register()
             self._clients[resp.participant_id] = client
 
+        # Register a dedicated client for runner queries (depth, txns).
+        self._query_client = LocalDMAClient(self._exchange)
+        self._query_client.register()
+
         self._message_count = 0
         self._last_txn_printed = 0
 
@@ -130,7 +134,7 @@ class Runner:
         from market_simulator.core.messages import TransactionsRequest
 
         resp = self._exchange.handle_transactions_request(
-            TransactionsRequest(participant_id=0),
+            TransactionsRequest(participant_id=self._query_client.participant_id),
         )
         new_txns = resp.transactions[self._last_txn_printed:]
         if new_txns:
@@ -155,7 +159,7 @@ class Runner:
 
         # Get last transaction price.
         txn_resp = self._exchange.handle_transactions_request(
-            TransactionsRequest(participant_id=0),
+            TransactionsRequest(participant_id=self._query_client.participant_id),
         )
         last_txn_price = (
             txn_resp.transactions[-1].price if txn_resp.transactions else None
@@ -165,7 +169,7 @@ class Runner:
         for instrument in instruments:
             resp = self._exchange.handle_depth_request(
                 DepthRequest(
-                    participant_id=0,
+                    participant_id=self._query_client.participant_id,
                     instrument=instrument,
                     levels=pc.depth_levels,
                 ),

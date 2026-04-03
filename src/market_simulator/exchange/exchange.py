@@ -124,18 +124,27 @@ class Exchange:
 
     # -- Shared validation ----------------------------------------------------
 
+    def _validate_request_participant(
+        self, participant_id: int,
+    ) -> RejectionReason | None:
+        """Validate that a participant is registered.
+
+        Used by both order message and query handlers.
+        """
+        if participant_id not in self._participants:
+            return RejectionReason.UNREGISTERED_PARTICIPANT
+        return None
+
     def _validate_request(
         self, request: OrderMessageRequest,
     ) -> RejectionReason | None:
-        """Validate request-level fields common to all actions.
+        """Validate request-level fields common to all order actions.
 
         Checks exchange state and participant registration.
         """
         if not self.is_open:
             return RejectionReason.EXCHANGE_CLOSED
-        if request.participant_id not in self._participants:
-            return RejectionReason.UNREGISTERED_PARTICIPANT
-        return None
+        return self._validate_request_participant(request.participant_id)
 
     def _validate_submit_fields(
         self, order: Order,
@@ -422,28 +431,56 @@ class Exchange:
         self, request: ExchangeStatusRequest,
     ) -> ExchangeStatusResponse:
         """Return the current exchange operational status."""
-        return ExchangeStatusResponse(is_open=self.is_open)
+        rejection = self._validate_request_participant(request.participant_id)
+        if rejection is not None:
+            return ExchangeStatusResponse(
+                request_status=RequestStatus.REJECTED,
+                rejection_reason=rejection,
+            )
+        return ExchangeStatusResponse(
+            request_status=RequestStatus.ACCEPTED,
+            is_open=self.is_open,
+        )
 
     def handle_depth_request(
         self, request: DepthRequest,
     ) -> DepthResponse:
         """Return order book depth for an instrument."""
+        rejection = self._validate_request_participant(request.participant_id)
+        if rejection is not None:
+            return DepthResponse(
+                request_status=RequestStatus.REJECTED,
+                instrument=request.instrument,
+                rejection_reason=rejection,
+            )
         book = self._order_books.get(request.instrument)
         levels = None if book is None else book.get_depth(request.levels)
         return DepthResponse(
-            instrument=request.instrument, levels=levels,
+            request_status=RequestStatus.ACCEPTED,
+            instrument=request.instrument,
+            levels=levels,
         )
 
     def handle_order_query_request(
         self, request: OrderQueryRequest,
     ) -> OrderQueryResponse:
         """Look up an order by ID and return its state."""
+        rejection = self._validate_request_participant(request.participant_id)
+        if rejection is not None:
+            return OrderQueryResponse(
+                request_status=RequestStatus.REJECTED,
+                order_id=request.order_id,
+                rejection_reason=rejection,
+            )
         order = self._find_order(request.order_id, request.instrument)
         if order is None:
             return OrderQueryResponse(
-                order_id=request.order_id, found=False,
+                request_status=RequestStatus.ACCEPTED,
+                order_id=request.order_id,
+                found=False,
             )
         return OrderQueryResponse(
+            request_status=RequestStatus.ACCEPTED,
             order_id=request.order_id,
             found=True,
             order_status=order.status,
@@ -462,7 +499,16 @@ class Exchange:
         self, request: TransactionsRequest,
     ) -> TransactionsResponse:
         """Return the list of all transactions."""
-        return TransactionsResponse(transactions=list(self._transactions))
+        rejection = self._validate_request_participant(request.participant_id)
+        if rejection is not None:
+            return TransactionsResponse(
+                request_status=RequestStatus.REJECTED,
+                rejection_reason=rejection,
+            )
+        return TransactionsResponse(
+            request_status=RequestStatus.ACCEPTED,
+            transactions=list(self._transactions),
+        )
 
     # -- Internal helpers ---------------------------------------------------
 
