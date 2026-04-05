@@ -1266,6 +1266,41 @@ class TestAPILevelEnforcement:
         assert resp.request_status == RequestStatus.REJECTED
         assert resp.rejection_reason == RejectionReason.INSUFFICIENT_API_LEVEL
 
+    # -- L2 inherits all L1 capabilities ----------------------------------------
+
+    def test_l2_can_submit_orders(self):
+        ex = _make_exchange()
+        ex.open()
+        pid = _register(ex, APILevel.L2)
+        resp = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
+        assert resp.request_status == RequestStatus.ACCEPTED
+
+    def test_l2_can_query_exchange_status(self):
+        ex = _make_exchange()
+        pid = _register(ex, APILevel.L2)
+        resp = ex.handle_exchange_status_request(
+            ExchangeStatusRequest(participant_id=pid),
+        )
+        assert resp.request_status == RequestStatus.ACCEPTED
+
+    def test_l2_can_query_order(self):
+        ex = _make_exchange()
+        ex.open()
+        pid = _register(ex, APILevel.L2)
+        _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
+        resp = ex.handle_order_query_request(
+            OrderQueryRequest(participant_id=pid, order_id=1),
+        )
+        assert resp.request_status == RequestStatus.ACCEPTED
+
+    def test_l2_can_query_nbbo(self):
+        ex = _make_exchange()
+        pid = _register(ex, APILevel.L2)
+        resp = ex.handle_nbbo_request(
+            NBBORequest(participant_id=pid, instrument="XYZ"),
+        )
+        assert resp.request_status == RequestStatus.ACCEPTED
+
     def test_l2_can_query_depth(self):
         ex = _make_exchange()
         ex.open()
@@ -1286,6 +1321,49 @@ class TestAPILevelEnforcement:
         assert resp.request_status == RequestStatus.REJECTED
         assert resp.rejection_reason == RejectionReason.INSUFFICIENT_API_LEVEL
 
+    # -- L3 inherits all L1 and L2 capabilities --------------------------------
+
+    def test_l3_can_submit_orders(self):
+        ex = _make_exchange()
+        ex.open()
+        pid = _register(ex, APILevel.L3)
+        resp = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
+        assert resp.request_status == RequestStatus.ACCEPTED
+
+    def test_l3_can_query_exchange_status(self):
+        ex = _make_exchange()
+        pid = _register(ex, APILevel.L3)
+        resp = ex.handle_exchange_status_request(
+            ExchangeStatusRequest(participant_id=pid),
+        )
+        assert resp.request_status == RequestStatus.ACCEPTED
+
+    def test_l3_can_query_order(self):
+        ex = _make_exchange()
+        ex.open()
+        pid = _register(ex, APILevel.L3)
+        _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
+        resp = ex.handle_order_query_request(
+            OrderQueryRequest(participant_id=pid, order_id=1),
+        )
+        assert resp.request_status == RequestStatus.ACCEPTED
+
+    def test_l3_can_query_nbbo(self):
+        ex = _make_exchange()
+        pid = _register(ex, APILevel.L3)
+        resp = ex.handle_nbbo_request(
+            NBBORequest(participant_id=pid, instrument="XYZ"),
+        )
+        assert resp.request_status == RequestStatus.ACCEPTED
+
+    def test_l3_can_query_depth(self):
+        ex = _make_exchange()
+        pid = _register(ex, APILevel.L3)
+        resp = ex.handle_depth_request(
+            DepthRequest(participant_id=pid, instrument="XYZ", levels=5),
+        )
+        assert resp.request_status == RequestStatus.ACCEPTED
+
     def test_l3_can_query_transactions(self):
         ex = _make_exchange()
         ex.open()
@@ -1295,11 +1373,3 @@ class TestAPILevelEnforcement:
         )
         assert resp.request_status == RequestStatus.ACCEPTED
         assert resp.transactions == []
-
-    def test_l3_can_query_depth(self):
-        ex = _make_exchange()
-        pid = _register(ex, APILevel.L3)
-        resp = ex.handle_depth_request(
-            DepthRequest(participant_id=pid, instrument="XYZ", levels=5),
-        )
-        assert resp.request_status == RequestStatus.ACCEPTED

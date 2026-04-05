@@ -301,94 +301,130 @@ class TestQueryMethods:
 # -- API level enforcement (client-side) --------------------------------------
 
 
+def _make_leveled_client(
+    level: APILevel,
+) -> tuple[LocalDMAClient, Exchange]:
+    """Create a registered LocalDMAClient at a given API level."""
+    config = ExchangeConfig(instruments=["XYZ"])
+    clock = Clock(mode=ClockMode.FAST_SIMULATION)
+    exchange = Exchange(config, clock)
+    exchange.open()
+    client = LocalDMAClient(exchange, api_level=level)
+    client.register()
+    return client, exchange
+
+
 class TestAPILevelClientEnforcement:
 
-    def test_l1_can_submit_orders(self) -> None:
-        config = ExchangeConfig(instruments=["XYZ"])
-        clock = Clock(mode=ClockMode.FAST_SIMULATION)
-        exchange = Exchange(config, clock)
-        exchange.open()
-        client = LocalDMAClient(exchange, api_level=APILevel.L1)
-        client.register()
+    # -- L1 capabilities -------------------------------------------------------
 
+    def test_l1_can_submit_orders(self) -> None:
+        client, _ = _make_leveled_client(APILevel.L1)
         resp = client.submit_order(
-            instrument="XYZ",
-            side=Side.BUY,
-            order_type=OrderType.LIMIT,
-            price=Decimal("100"),
-            quantity=Decimal("10"),
+            instrument="XYZ", side=Side.BUY,
+            order_type=OrderType.LIMIT, price=Decimal("100"), quantity=Decimal("10"),
         )
         assert resp.request_status == RequestStatus.ACCEPTED
 
     def test_l1_can_query_exchange_status(self) -> None:
-        client, _ = _make_client()
-        client._api_level = APILevel.L1
-        client.register()
-        resp = client.query_exchange_status()
-        assert resp.is_open is True
+        client, _ = _make_leveled_client(APILevel.L1)
+        assert client.query_exchange_status().is_open is True
+
+    def test_l1_can_query_order(self) -> None:
+        client, _ = _make_leveled_client(APILevel.L1)
+        client.submit_order(
+            instrument="XYZ", side=Side.BUY,
+            order_type=OrderType.LIMIT, price=Decimal("100"), quantity=Decimal("10"),
+        )
+        resp = client.query_order(1, instrument="XYZ")
+        assert resp.found is True
 
     def test_l1_can_query_nbbo(self) -> None:
-        config = ExchangeConfig(instruments=["XYZ"])
-        clock = Clock(mode=ClockMode.FAST_SIMULATION)
-        exchange = Exchange(config, clock)
-        exchange.open()
-        client = LocalDMAClient(exchange, api_level=APILevel.L1)
-        client.register()
-        resp = client.query_nbbo("XYZ")
-        assert resp.request_status == RequestStatus.ACCEPTED
+        client, _ = _make_leveled_client(APILevel.L1)
+        assert client.query_nbbo("XYZ").request_status == RequestStatus.ACCEPTED
 
     def test_l1_cannot_query_depth(self) -> None:
-        config = ExchangeConfig(instruments=["XYZ"])
-        clock = Clock(mode=ClockMode.FAST_SIMULATION)
-        exchange = Exchange(config, clock)
-        exchange.open()
-        client = LocalDMAClient(exchange, api_level=APILevel.L1)
-        client.register()
-
+        client, _ = _make_leveled_client(APILevel.L1)
         with pytest.raises(RuntimeError, match="Depth query requires L2"):
             client.query_depth("XYZ", 5)
 
     def test_l1_cannot_query_transactions(self) -> None:
-        config = ExchangeConfig(instruments=["XYZ"])
-        clock = Clock(mode=ClockMode.FAST_SIMULATION)
-        exchange = Exchange(config, clock)
-        exchange.open()
-        client = LocalDMAClient(exchange, api_level=APILevel.L1)
-        client.register()
-
+        client, _ = _make_leveled_client(APILevel.L1)
         with pytest.raises(RuntimeError, match="Transactions query requires L3"):
             client.query_transactions()
 
-    def test_l2_can_query_depth(self) -> None:
-        config = ExchangeConfig(instruments=["XYZ"])
-        clock = Clock(mode=ClockMode.FAST_SIMULATION)
-        exchange = Exchange(config, clock)
-        exchange.open()
-        client = LocalDMAClient(exchange, api_level=APILevel.L2)
-        client.register()
-        resp = client.query_depth("XYZ", 5)
+    # -- L2 inherits all L1 capabilities ---------------------------------------
+
+    def test_l2_can_submit_orders(self) -> None:
+        client, _ = _make_leveled_client(APILevel.L2)
+        resp = client.submit_order(
+            instrument="XYZ", side=Side.BUY,
+            order_type=OrderType.LIMIT, price=Decimal("100"), quantity=Decimal("10"),
+        )
         assert resp.request_status == RequestStatus.ACCEPTED
 
-    def test_l2_cannot_query_transactions(self) -> None:
-        config = ExchangeConfig(instruments=["XYZ"])
-        clock = Clock(mode=ClockMode.FAST_SIMULATION)
-        exchange = Exchange(config, clock)
-        exchange.open()
-        client = LocalDMAClient(exchange, api_level=APILevel.L2)
-        client.register()
+    def test_l2_can_query_exchange_status(self) -> None:
+        client, _ = _make_leveled_client(APILevel.L2)
+        assert client.query_exchange_status().is_open is True
 
+    def test_l2_can_query_order(self) -> None:
+        client, _ = _make_leveled_client(APILevel.L2)
+        client.submit_order(
+            instrument="XYZ", side=Side.BUY,
+            order_type=OrderType.LIMIT, price=Decimal("100"), quantity=Decimal("10"),
+        )
+        resp = client.query_order(1, instrument="XYZ")
+        assert resp.found is True
+
+    def test_l2_can_query_nbbo(self) -> None:
+        client, _ = _make_leveled_client(APILevel.L2)
+        assert client.query_nbbo("XYZ").request_status == RequestStatus.ACCEPTED
+
+    def test_l2_can_query_depth(self) -> None:
+        client, _ = _make_leveled_client(APILevel.L2)
+        assert client.query_depth("XYZ", 5).request_status == RequestStatus.ACCEPTED
+
+    def test_l2_cannot_query_transactions(self) -> None:
+        client, _ = _make_leveled_client(APILevel.L2)
         with pytest.raises(RuntimeError, match="Transactions query requires L3"):
             client.query_transactions()
 
-    def test_l3_can_query_everything(self) -> None:
-        config = ExchangeConfig(instruments=["XYZ"])
-        clock = Clock(mode=ClockMode.FAST_SIMULATION)
-        exchange = Exchange(config, clock)
-        exchange.open()
-        client = LocalDMAClient(exchange, api_level=APILevel.L3)
-        client.register()
+    # -- L3 inherits all L1 and L2 capabilities --------------------------------
+
+    def test_l3_can_submit_orders(self) -> None:
+        client, _ = _make_leveled_client(APILevel.L3)
+        resp = client.submit_order(
+            instrument="XYZ", side=Side.BUY,
+            order_type=OrderType.LIMIT, price=Decimal("100"), quantity=Decimal("10"),
+        )
+        assert resp.request_status == RequestStatus.ACCEPTED
+
+    def test_l3_can_query_exchange_status(self) -> None:
+        client, _ = _make_leveled_client(APILevel.L3)
+        assert client.query_exchange_status().is_open is True
+
+    def test_l3_can_query_order(self) -> None:
+        client, _ = _make_leveled_client(APILevel.L3)
+        client.submit_order(
+            instrument="XYZ", side=Side.BUY,
+            order_type=OrderType.LIMIT, price=Decimal("100"), quantity=Decimal("10"),
+        )
+        resp = client.query_order(1, instrument="XYZ")
+        assert resp.found is True
+
+    def test_l3_can_query_nbbo(self) -> None:
+        client, _ = _make_leveled_client(APILevel.L3)
+        assert client.query_nbbo("XYZ").request_status == RequestStatus.ACCEPTED
+
+    def test_l3_can_query_depth(self) -> None:
+        client, _ = _make_leveled_client(APILevel.L3)
         assert client.query_depth("XYZ", 5).request_status == RequestStatus.ACCEPTED
+
+    def test_l3_can_query_transactions(self) -> None:
+        client, _ = _make_leveled_client(APILevel.L3)
         assert client.query_transactions().request_status == RequestStatus.ACCEPTED
+
+    # -- Misc ------------------------------------------------------------------
 
     def test_api_level_property(self) -> None:
         config = ExchangeConfig(instruments=["XYZ"])
