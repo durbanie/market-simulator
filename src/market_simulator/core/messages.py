@@ -9,6 +9,7 @@ from decimal import Decimal
 
 from market_simulator.core.exchange_enums import (
     Action,
+    APILevel,
     OrderStatus,
     OrderType,
     RejectionReason,
@@ -76,6 +77,16 @@ class OrderMessageResponse:
 
 
 @dataclass
+class RegistrationRequest:
+    """Request to register a new participant.
+
+    Attributes:
+        api_level: The API access level requested.
+    """
+    api_level: APILevel
+
+
+@dataclass
 class RegistrationResponse:
     """Response to a participant registration request.
 
@@ -106,6 +117,36 @@ class ExchangeStatusResponse:
     """
     request_status: RequestStatus
     is_open: bool | None = None
+    rejection_reason: RejectionReason | None = None
+
+
+@dataclass
+class NBBORequest:
+    """Request for the national best bid and offer.
+
+    Attributes:
+        participant_id: The requesting participant's ID.
+        instrument: The ticker symbol to query.
+    """
+    participant_id: int
+    instrument: str
+
+
+@dataclass
+class NBBOResponse:
+    """Response for an NBBO query.
+
+    Attributes:
+        request_status: Outcome of the request.
+        instrument: The queried instrument.
+        best_bid: Best bid price, or None if no bids.
+        best_ask: Best ask price, or None if no asks.
+        rejection_reason: Set only when request_status is REJECTED.
+    """
+    request_status: RequestStatus
+    instrument: str
+    best_bid: Decimal | None = None
+    best_ask: Decimal | None = None
     rejection_reason: RejectionReason | None = None
 
 

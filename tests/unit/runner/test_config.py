@@ -24,7 +24,7 @@ class TestLoadConfig:
                 "starting_transaction_id": 200,
                 "starting_participant_id": 10,
             },
-            "participants": {"num_participants": 50},
+            "participants": {"L1": 30, "L2": 15, "L3": 5},
             "print": {
                 "transactions_every_n": 10,
                 "depth_every_n": 20,
@@ -46,7 +46,10 @@ class TestLoadConfig:
         assert rc.exchange.starting_order_id == 100
         assert rc.exchange.starting_transaction_id == 200
         assert rc.exchange.starting_participant_id == 10
-        assert rc.num_participants == 50
+        assert rc.participants.L1 == 30
+        assert rc.participants.L2 == 15
+        assert rc.participants.L3 == 5
+        assert rc.participants.total == 50
         assert rc.print_config.transactions_every_n == 10
         assert rc.print_config.depth_every_n == 20
         assert rc.print_config.depth_instruments == ["ABC"]
@@ -69,7 +72,10 @@ class TestLoadConfig:
         assert rc.exchange.instruments == ["XYZ"]
         assert rc.exchange.maker_fee_bps == Decimal("-3")
         assert rc.exchange.taker_fee_bps == Decimal("7")
-        assert rc.num_participants == 1
+        assert rc.participants.L1 == 0
+        assert rc.participants.L2 == 0
+        assert rc.participants.L3 == 0
+        assert rc.participants.total == 0
         assert rc.print_config.transactions_every_n == 0
         assert rc.print_config.depth_every_n == 0
         assert rc.print_config.depth_instruments is None

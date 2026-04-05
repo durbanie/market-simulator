@@ -5,6 +5,7 @@ from decimal import Decimal
 from market_simulator.core.clock import Clock, ClockMode
 from market_simulator.core.exchange_enums import (
     Action,
+    APILevel,
     ExchangeState,
     OrderStatus,
     OrderType,
@@ -15,9 +16,11 @@ from market_simulator.core.exchange_enums import (
 from market_simulator.core.messages import (
     DepthRequest,
     ExchangeStatusRequest,
+    NBBORequest,
     OrderMessageRequest,
     OrderMessageResponse,
     OrderQueryRequest,
+    RegistrationRequest,
     TransactionsRequest,
 )
 from market_simulator.exchange.exchange import Exchange, ExchangeConfig
@@ -38,9 +41,11 @@ def _make_exchange(
     return Exchange(config, clock)
 
 
-def _register(ex: Exchange) -> int:
+def _register(ex: Exchange, api_level: APILevel = APILevel.L3) -> int:
     """Register a participant and return their ID."""
-    return ex.handle_registration_request().participant_id
+    return ex.handle_registration_request(
+        RegistrationRequest(api_level=api_level),
+    ).participant_id
 
 
 def _submit_limit(
@@ -121,9 +126,10 @@ class TestOpenClose:
 class TestRegistration:
     def test_register_returns_incrementing_ids(self):
         ex = _make_exchange(starting_participant_id=100)
-        r1 = ex.handle_registration_request()
-        r2 = ex.handle_registration_request()
-        r3 = ex.handle_registration_request()
+        req = RegistrationRequest(api_level=APILevel.L1)
+        r1 = ex.handle_registration_request(req)
+        r2 = ex.handle_registration_request(req)
+        r3 = ex.handle_registration_request(req)
         assert r1.participant_id == 100
         assert r2.participant_id == 101
         assert r3.participant_id == 102
@@ -211,7 +217,7 @@ class TestSubmitOrder:
         clock = Clock(mode=ClockMode.FAST_SIMULATION, offset_us=5000000)
         ex = Exchange(config, clock)
         ex.open()
-        pid = ex.handle_registration_request().participant_id
+        pid = _register(ex)
         resp = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
         order = _get_order(ex,resp.order_id)
         assert order.creation_timestamp == 5000000
@@ -465,7 +471,7 @@ class TestModifyOrder:
         clock = Clock(mode=ClockMode.FAST_SIMULATION, offset_us=1000)
         ex = Exchange(config, clock)
         ex.open()
-        pid = ex.handle_registration_request().participant_id
+        pid = _register(ex)
         r = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("100"))
         clock.advance(5000)
         ex.handle_order_message(OrderMessageRequest(
@@ -592,7 +598,7 @@ class TestCancelOrder:
         clock = Clock(mode=ClockMode.FAST_SIMULATION, offset_us=1000)
         ex = Exchange(config, clock)
         ex.open()
-        pid = ex.handle_registration_request().participant_id
+        pid = _register(ex)
         r = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
         clock.advance(5000)
         resp = ex.handle_order_message(OrderMessageRequest(
@@ -1149,3 +1155,221 @@ class TestMatching:
         _submit_market(ex, taker, "XYZ", Side.BUY, Decimal("10"))
         depth_after = _get_depth(ex, maker, "XYZ", 5)
         assert depth_after["asks"] == []
+
+
+class TestNBBO:
+
+    def test_nbbo_with_orders(self):
+        ex = _make_exchange()
+        ex.open()
+        pid = _register(ex)
+        _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50.00"), Decimal("10"))
+        _submit_limit(ex, pid, "XYZ", Side.SELL, Decimal("51.00"), Decimal("5"))
+        resp = ex.handle_nbbo_request(
+            NBBORequest(participant_id=pid, instrument="XYZ"),
+        )
+        assert resp.request_status == RequestStatus.ACCEPTED
+        assert resp.best_bid == Decimal("50.00")
+        assert resp.best_ask == Decimal("51.00")
+
+    def test_nbbo_empty_book(self):
+        ex = _make_exchange()
+        ex.open()
+        pid = _register(ex)
+        resp = ex.handle_nbbo_request(
+            NBBORequest(participant_id=pid, instrument="XYZ"),
+        )
+        assert resp.request_status == RequestStatus.ACCEPTED
+        assert resp.best_bid is None
+        assert resp.best_ask is None
+
+    def test_nbbo_one_side_only(self):
+        ex = _make_exchange()
+        ex.open()
+        pid = _register(ex)
+        _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50.00"), Decimal("10"))
+        resp = ex.handle_nbbo_request(
+            NBBORequest(participant_id=pid, instrument="XYZ"),
+        )
+        assert resp.best_bid == Decimal("50.00")
+        assert resp.best_ask is None
+
+    def test_nbbo_unknown_instrument(self):
+        ex = _make_exchange()
+        pid = _register(ex)
+        resp = ex.handle_nbbo_request(
+            NBBORequest(participant_id=pid, instrument="UNKNOWN"),
+        )
+        assert resp.request_status == RequestStatus.ACCEPTED
+        assert resp.best_bid is None
+        assert resp.best_ask is None
+
+    def test_nbbo_unregistered_participant(self):
+        ex = _make_exchange()
+        resp = ex.handle_nbbo_request(
+            NBBORequest(participant_id=999, instrument="XYZ"),
+        )
+        assert resp.request_status == RequestStatus.REJECTED
+        assert resp.rejection_reason == RejectionReason.UNREGISTERED_PARTICIPANT
+
+
+class TestAPILevelEnforcement:
+
+    def test_l1_can_submit_orders(self):
+        ex = _make_exchange()
+        ex.open()
+        pid = _register(ex, APILevel.L1)
+        resp = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
+        assert resp.request_status == RequestStatus.ACCEPTED
+
+    def test_l1_can_query_exchange_status(self):
+        ex = _make_exchange()
+        pid = _register(ex, APILevel.L1)
+        resp = ex.handle_exchange_status_request(
+            ExchangeStatusRequest(participant_id=pid),
+        )
+        assert resp.request_status == RequestStatus.ACCEPTED
+
+    def test_l1_can_query_order(self):
+        ex = _make_exchange()
+        ex.open()
+        pid = _register(ex, APILevel.L1)
+        _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
+        resp = ex.handle_order_query_request(
+            OrderQueryRequest(participant_id=pid, order_id=1),
+        )
+        assert resp.request_status == RequestStatus.ACCEPTED
+
+    def test_l1_can_query_nbbo(self):
+        ex = _make_exchange()
+        pid = _register(ex, APILevel.L1)
+        resp = ex.handle_nbbo_request(
+            NBBORequest(participant_id=pid, instrument="XYZ"),
+        )
+        assert resp.request_status == RequestStatus.ACCEPTED
+
+    def test_l1_cannot_query_depth(self):
+        ex = _make_exchange()
+        pid = _register(ex, APILevel.L1)
+        resp = ex.handle_depth_request(
+            DepthRequest(participant_id=pid, instrument="XYZ", levels=5),
+        )
+        assert resp.request_status == RequestStatus.REJECTED
+        assert resp.rejection_reason == RejectionReason.INSUFFICIENT_API_LEVEL
+
+    def test_l1_cannot_query_transactions(self):
+        ex = _make_exchange()
+        pid = _register(ex, APILevel.L1)
+        resp = ex.handle_transactions_request(
+            TransactionsRequest(participant_id=pid),
+        )
+        assert resp.request_status == RequestStatus.REJECTED
+        assert resp.rejection_reason == RejectionReason.INSUFFICIENT_API_LEVEL
+
+    # -- L2 inherits all L1 capabilities ----------------------------------------
+
+    def test_l2_can_submit_orders(self):
+        ex = _make_exchange()
+        ex.open()
+        pid = _register(ex, APILevel.L2)
+        resp = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
+        assert resp.request_status == RequestStatus.ACCEPTED
+
+    def test_l2_can_query_exchange_status(self):
+        ex = _make_exchange()
+        pid = _register(ex, APILevel.L2)
+        resp = ex.handle_exchange_status_request(
+            ExchangeStatusRequest(participant_id=pid),
+        )
+        assert resp.request_status == RequestStatus.ACCEPTED
+
+    def test_l2_can_query_order(self):
+        ex = _make_exchange()
+        ex.open()
+        pid = _register(ex, APILevel.L2)
+        _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
+        resp = ex.handle_order_query_request(
+            OrderQueryRequest(participant_id=pid, order_id=1),
+        )
+        assert resp.request_status == RequestStatus.ACCEPTED
+
+    def test_l2_can_query_nbbo(self):
+        ex = _make_exchange()
+        pid = _register(ex, APILevel.L2)
+        resp = ex.handle_nbbo_request(
+            NBBORequest(participant_id=pid, instrument="XYZ"),
+        )
+        assert resp.request_status == RequestStatus.ACCEPTED
+
+    def test_l2_can_query_depth(self):
+        ex = _make_exchange()
+        ex.open()
+        pid = _register(ex, APILevel.L2)
+        _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
+        resp = ex.handle_depth_request(
+            DepthRequest(participant_id=pid, instrument="XYZ", levels=5),
+        )
+        assert resp.request_status == RequestStatus.ACCEPTED
+        assert len(resp.levels["bids"]) == 1
+
+    def test_l2_cannot_query_transactions(self):
+        ex = _make_exchange()
+        pid = _register(ex, APILevel.L2)
+        resp = ex.handle_transactions_request(
+            TransactionsRequest(participant_id=pid),
+        )
+        assert resp.request_status == RequestStatus.REJECTED
+        assert resp.rejection_reason == RejectionReason.INSUFFICIENT_API_LEVEL
+
+    # -- L3 inherits all L1 and L2 capabilities --------------------------------
+
+    def test_l3_can_submit_orders(self):
+        ex = _make_exchange()
+        ex.open()
+        pid = _register(ex, APILevel.L3)
+        resp = _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
+        assert resp.request_status == RequestStatus.ACCEPTED
+
+    def test_l3_can_query_exchange_status(self):
+        ex = _make_exchange()
+        pid = _register(ex, APILevel.L3)
+        resp = ex.handle_exchange_status_request(
+            ExchangeStatusRequest(participant_id=pid),
+        )
+        assert resp.request_status == RequestStatus.ACCEPTED
+
+    def test_l3_can_query_order(self):
+        ex = _make_exchange()
+        ex.open()
+        pid = _register(ex, APILevel.L3)
+        _submit_limit(ex, pid, "XYZ", Side.BUY, Decimal("50"), Decimal("10"))
+        resp = ex.handle_order_query_request(
+            OrderQueryRequest(participant_id=pid, order_id=1),
+        )
+        assert resp.request_status == RequestStatus.ACCEPTED
+
+    def test_l3_can_query_nbbo(self):
+        ex = _make_exchange()
+        pid = _register(ex, APILevel.L3)
+        resp = ex.handle_nbbo_request(
+            NBBORequest(participant_id=pid, instrument="XYZ"),
+        )
+        assert resp.request_status == RequestStatus.ACCEPTED
+
+    def test_l3_can_query_depth(self):
+        ex = _make_exchange()
+        pid = _register(ex, APILevel.L3)
+        resp = ex.handle_depth_request(
+            DepthRequest(participant_id=pid, instrument="XYZ", levels=5),
+        )
+        assert resp.request_status == RequestStatus.ACCEPTED
+
+    def test_l3_can_query_transactions(self):
+        ex = _make_exchange()
+        ex.open()
+        pid = _register(ex, APILevel.L3)
+        resp = ex.handle_transactions_request(
+            TransactionsRequest(participant_id=pid),
+        )
+        assert resp.request_status == RequestStatus.ACCEPTED
+        assert resp.transactions == []
