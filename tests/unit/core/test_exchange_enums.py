@@ -4,6 +4,7 @@ import pytest
 
 from market_simulator.core.exchange_enums import (
     Action,
+    APILevel,
     ExchangeState,
     OrderStatus,
     OrderType,
@@ -11,6 +12,23 @@ from market_simulator.core.exchange_enums import (
     RequestStatus,
     Side,
 )
+
+
+class TestAPILevel:
+    def test_members(self):
+        assert set(APILevel) == {APILevel.L1, APILevel.L2, APILevel.L3}
+
+    def test_construction_from_string(self):
+        assert APILevel("L1") == APILevel.L1
+        assert APILevel("L2") == APILevel.L2
+        assert APILevel("L3") == APILevel.L3
+
+    def test_ordering(self):
+        assert APILevel.L1 < APILevel.L2 < APILevel.L3
+
+    def test_invalid_value_raises(self):
+        with pytest.raises(ValueError):
+            APILevel("L0")
 
 
 class TestSide:
@@ -73,6 +91,7 @@ class TestRejectionReason:
             RejectionReason.EXCHANGE_CLOSED,
             RejectionReason.NO_LIQUIDITY,
             RejectionReason.UNAUTHORIZED_PARTICIPANT,
+            RejectionReason.INSUFFICIENT_API_LEVEL,
         }
         assert set(RejectionReason) == expected
 

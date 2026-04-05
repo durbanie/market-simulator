@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import IO
 
 from market_simulator.core.clock import Clock
-from market_simulator.core.exchange_enums import Action, OrderType, Side
+from market_simulator.core.exchange_enums import APILevel, Action, OrderType, Side
 from market_simulator.exchange.client.local_dma_client import LocalDMAClient
 from market_simulator.exchange.exchange import Exchange
 from market_simulator.runner.config import RunnerConfig
@@ -39,13 +39,15 @@ class Runner:
         self._exchange = Exchange(config.exchange, self._clock)
 
         self._clients: dict[int, LocalDMAClient] = {}
-        for _ in range(config.num_participants):
-            client = LocalDMAClient(self._exchange)
-            resp = client.register()
-            self._clients[resp.participant_id] = client
+        for level in (APILevel.L1, APILevel.L2, APILevel.L3):
+            count = getattr(config.participants, level.value)
+            for _ in range(count):
+                client = LocalDMAClient(self._exchange, api_level=level)
+                resp = client.register()
+                self._clients[resp.participant_id] = client
 
-        # Register a dedicated client for runner queries (depth, txns).
-        self._query_client = LocalDMAClient(self._exchange)
+        # Register a dedicated L3 client for runner queries (depth, txns).
+        self._query_client = LocalDMAClient(self._exchange, api_level=APILevel.L3)
         self._query_client.register()
 
         self._message_count = 0

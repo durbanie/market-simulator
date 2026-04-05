@@ -15,7 +15,7 @@ from market_simulator.core.messages import (
     TransactionsRequest,
 )
 from market_simulator.exchange.exchange import ExchangeConfig
-from market_simulator.runner.config import PrintConfig, RunnerConfig
+from market_simulator.runner.config import ParticipantsConfig, PrintConfig, RunnerConfig
 from market_simulator.runner.runner import Runner
 
 
@@ -32,6 +32,7 @@ def _write_csv(tmp_path, rows: list[str]) -> str:
 
 def _make_config(csv_path: str, **overrides) -> RunnerConfig:
     """Build a RunnerConfig with sensible defaults."""
+    num = overrides.get("num_participants", 2)
     return RunnerConfig(
         csv_path=csv_path,
         clock_mode=overrides.get("clock_mode", ClockMode.FAST_SIMULATION),
@@ -39,7 +40,10 @@ def _make_config(csv_path: str, **overrides) -> RunnerConfig:
             "exchange",
             ExchangeConfig(instruments=["XYZ"]),
         ),
-        num_participants=overrides.get("num_participants", 2),
+        participants=overrides.get(
+            "participants",
+            ParticipantsConfig(L1=num),
+        ),
         print_config=overrides.get("print_config", PrintConfig()),
     )
 

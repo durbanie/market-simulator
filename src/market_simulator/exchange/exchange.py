@@ -6,6 +6,7 @@ from decimal import Decimal
 from market_simulator.core.clock import Clock
 from market_simulator.core.exchange_enums import (
     Action,
+    APILevel,
     ExchangeState,
     OrderStatus,
     OrderType,
@@ -18,10 +19,13 @@ from market_simulator.core.messages import (
     DepthResponse,
     ExchangeStatusRequest,
     ExchangeStatusResponse,
+    NBBORequest,
+    NBBOResponse,
     OrderMessageRequest,
     OrderMessageResponse,
     OrderQueryRequest,
     OrderQueryResponse,
+    RegistrationRequest,
     RegistrationResponse,
     TransactionsRequest,
     TransactionsResponse,
@@ -71,7 +75,7 @@ class Exchange:
         self._next_transaction_id = config.starting_transaction_id
         self._next_participant_id = config.starting_participant_id
 
-        self._participants: set[int] = set()
+        self._participants: dict[int, APILevel] = {}
         self._order_books: dict[str, OrderBook] = {
             instrument: OrderBook(instrument)
             for instrument in config.instruments
@@ -100,11 +104,13 @@ class Exchange:
 
     # -- Public request handlers --------------------------------------------
 
-    def handle_registration_request(self) -> RegistrationResponse:
+    def handle_registration_request(
+        self, request: RegistrationRequest,
+    ) -> RegistrationResponse:
         """Register a new participant and return a RegistrationResponse."""
         pid = self._next_participant_id
         self._next_participant_id += 1
-        self._participants.add(pid)
+        self._participants[pid] = request.api_level
         return RegistrationResponse(participant_id=pid)
 
     def handle_order_message(
@@ -125,14 +131,18 @@ class Exchange:
     # -- Shared validation ----------------------------------------------------
 
     def _validate_request_participant(
-        self, participant_id: int,
+        self,
+        participant_id: int,
+        required_level: APILevel = APILevel.L1,
     ) -> RejectionReason | None:
-        """Validate that a participant is registered.
+        """Validate that a participant is registered and has sufficient API level.
 
         Used by both order message and query handlers.
         """
         if participant_id not in self._participants:
             return RejectionReason.UNREGISTERED_PARTICIPANT
+        if self._participants[participant_id] < required_level:
+            return RejectionReason.INSUFFICIENT_API_LEVEL
         return None
 
     def _validate_request(
@@ -442,11 +452,41 @@ class Exchange:
             is_open=self.is_open,
         )
 
+    def handle_nbbo_request(
+        self, request: NBBORequest,
+    ) -> NBBOResponse:
+        """Return the best bid and ask for an instrument."""
+        rejection = self._validate_request_participant(request.participant_id)
+        if rejection is not None:
+            return NBBOResponse(
+                request_status=RequestStatus.REJECTED,
+                instrument=request.instrument,
+                rejection_reason=rejection,
+            )
+        book = self._order_books.get(request.instrument)
+        best_bid = None
+        best_ask = None
+        if book is not None:
+            bid = book.peek_best_bid()
+            ask = book.peek_best_ask()
+            if bid is not None:
+                best_bid = bid.price
+            if ask is not None:
+                best_ask = ask.price
+        return NBBOResponse(
+            request_status=RequestStatus.ACCEPTED,
+            instrument=request.instrument,
+            best_bid=best_bid,
+            best_ask=best_ask,
+        )
+
     def handle_depth_request(
         self, request: DepthRequest,
     ) -> DepthResponse:
         """Return order book depth for an instrument."""
-        rejection = self._validate_request_participant(request.participant_id)
+        rejection = self._validate_request_participant(
+            request.participant_id, required_level=APILevel.L2,
+        )
         if rejection is not None:
             return DepthResponse(
                 request_status=RequestStatus.REJECTED,
@@ -499,7 +539,9 @@ class Exchange:
         self, request: TransactionsRequest,
     ) -> TransactionsResponse:
         """Return the list of all transactions."""
-        rejection = self._validate_request_participant(request.participant_id)
+        rejection = self._validate_request_participant(
+            request.participant_id, required_level=APILevel.L3,
+        )
         if rejection is not None:
             return TransactionsResponse(
                 request_status=RequestStatus.REJECTED,

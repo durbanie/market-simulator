@@ -6,6 +6,7 @@ import pytest
 
 from market_simulator.core.clock import Clock, ClockMode
 from market_simulator.core.exchange_enums import (
+    APILevel,
     OrderType,
     RequestStatus,
     Side,
@@ -295,3 +296,103 @@ class TestQueryMethods:
         txn = resp.transactions[0]
         assert txn.price == Decimal("50")
         assert txn.quantity == Decimal("5")
+
+
+# -- API level enforcement (client-side) --------------------------------------
+
+
+class TestAPILevelClientEnforcement:
+
+    def test_l1_can_submit_orders(self) -> None:
+        config = ExchangeConfig(instruments=["XYZ"])
+        clock = Clock(mode=ClockMode.FAST_SIMULATION)
+        exchange = Exchange(config, clock)
+        exchange.open()
+        client = LocalDMAClient(exchange, api_level=APILevel.L1)
+        client.register()
+
+        resp = client.submit_order(
+            instrument="XYZ",
+            side=Side.BUY,
+            order_type=OrderType.LIMIT,
+            price=Decimal("100"),
+            quantity=Decimal("10"),
+        )
+        assert resp.request_status == RequestStatus.ACCEPTED
+
+    def test_l1_can_query_exchange_status(self) -> None:
+        client, _ = _make_client()
+        client._api_level = APILevel.L1
+        client.register()
+        resp = client.query_exchange_status()
+        assert resp.is_open is True
+
+    def test_l1_can_query_nbbo(self) -> None:
+        config = ExchangeConfig(instruments=["XYZ"])
+        clock = Clock(mode=ClockMode.FAST_SIMULATION)
+        exchange = Exchange(config, clock)
+        exchange.open()
+        client = LocalDMAClient(exchange, api_level=APILevel.L1)
+        client.register()
+        resp = client.query_nbbo("XYZ")
+        assert resp.request_status == RequestStatus.ACCEPTED
+
+    def test_l1_cannot_query_depth(self) -> None:
+        config = ExchangeConfig(instruments=["XYZ"])
+        clock = Clock(mode=ClockMode.FAST_SIMULATION)
+        exchange = Exchange(config, clock)
+        exchange.open()
+        client = LocalDMAClient(exchange, api_level=APILevel.L1)
+        client.register()
+
+        with pytest.raises(RuntimeError, match="Depth query requires L2"):
+            client.query_depth("XYZ", 5)
+
+    def test_l1_cannot_query_transactions(self) -> None:
+        config = ExchangeConfig(instruments=["XYZ"])
+        clock = Clock(mode=ClockMode.FAST_SIMULATION)
+        exchange = Exchange(config, clock)
+        exchange.open()
+        client = LocalDMAClient(exchange, api_level=APILevel.L1)
+        client.register()
+
+        with pytest.raises(RuntimeError, match="Transactions query requires L3"):
+            client.query_transactions()
+
+    def test_l2_can_query_depth(self) -> None:
+        config = ExchangeConfig(instruments=["XYZ"])
+        clock = Clock(mode=ClockMode.FAST_SIMULATION)
+        exchange = Exchange(config, clock)
+        exchange.open()
+        client = LocalDMAClient(exchange, api_level=APILevel.L2)
+        client.register()
+        resp = client.query_depth("XYZ", 5)
+        assert resp.request_status == RequestStatus.ACCEPTED
+
+    def test_l2_cannot_query_transactions(self) -> None:
+        config = ExchangeConfig(instruments=["XYZ"])
+        clock = Clock(mode=ClockMode.FAST_SIMULATION)
+        exchange = Exchange(config, clock)
+        exchange.open()
+        client = LocalDMAClient(exchange, api_level=APILevel.L2)
+        client.register()
+
+        with pytest.raises(RuntimeError, match="Transactions query requires L3"):
+            client.query_transactions()
+
+    def test_l3_can_query_everything(self) -> None:
+        config = ExchangeConfig(instruments=["XYZ"])
+        clock = Clock(mode=ClockMode.FAST_SIMULATION)
+        exchange = Exchange(config, clock)
+        exchange.open()
+        client = LocalDMAClient(exchange, api_level=APILevel.L3)
+        client.register()
+        assert client.query_depth("XYZ", 5).request_status == RequestStatus.ACCEPTED
+        assert client.query_transactions().request_status == RequestStatus.ACCEPTED
+
+    def test_api_level_property(self) -> None:
+        config = ExchangeConfig(instruments=["XYZ"])
+        clock = Clock(mode=ClockMode.FAST_SIMULATION)
+        exchange = Exchange(config, clock)
+        client = LocalDMAClient(exchange, api_level=APILevel.L2)
+        assert client.api_level == APILevel.L2

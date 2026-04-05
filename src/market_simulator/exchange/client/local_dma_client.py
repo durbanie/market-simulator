@@ -7,6 +7,7 @@ scenarios call its public methods to direct exchange interaction.
 from decimal import Decimal
 
 from market_simulator.core.exchange_enums import (
+    APILevel,
     Action,
     OrderType,
     Side,
@@ -16,6 +17,8 @@ from market_simulator.core.messages import (
     DepthResponse,
     ExchangeStatusRequest,
     ExchangeStatusResponse,
+    NBBORequest,
+    NBBOResponse,
     OrderMessageRequest,
     OrderMessageResponse,
     OrderQueryRequest,
@@ -37,10 +40,13 @@ class LocalDMAClient(DMAClient):
 
     Args:
         exchange: The exchange instance to interact with.
+        api_level: The API access level for this client.
     """
 
-    def __init__(self, exchange: Exchange) -> None:
-        super().__init__(exchange)
+    def __init__(
+        self, exchange: Exchange, api_level: APILevel = APILevel.L3,
+    ) -> None:
+        super().__init__(exchange, api_level)
 
     # -- Order convenience methods (field-level API) --------------------------
 
@@ -101,6 +107,13 @@ class LocalDMAClient(DMAClient):
             participant_id=self._participant_id or 0,
         ))
 
+    def query_nbbo(self, instrument: str) -> NBBOResponse:
+        """Query best bid/ask for an instrument."""
+        return self.get_nbbo(NBBORequest(
+            participant_id=self._participant_id or 0,
+            instrument=instrument,
+        ))
+
     def query_depth(
         self, instrument: str, levels: int,
     ) -> DepthResponse:
@@ -141,6 +154,11 @@ class LocalDMAClient(DMAClient):
 
     def _on_exchange_status_response(
         self, response: ExchangeStatusResponse,
+    ) -> None:
+        pass
+
+    def _on_nbbo_response(
+        self, response: NBBOResponse,
     ) -> None:
         pass
 

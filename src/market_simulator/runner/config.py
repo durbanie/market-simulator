@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 
 from market_simulator.core.clock import ClockMode
+from market_simulator.core.exchange_enums import APILevel
 from market_simulator.exchange.exchange import ExchangeConfig
 
 
@@ -28,6 +29,25 @@ class PrintConfig:
 
 
 @dataclass
+class ParticipantsConfig:
+    """Number of participants to register at each API level.
+
+    Attributes:
+        L1: Number of L1 (retail) participants.
+        L2: Number of L2 (institutional) participants.
+        L3: Number of L3 (market maker / HFT) participants.
+    """
+    L1: int = 0
+    L2: int = 0
+    L3: int = 0
+
+    @property
+    def total(self) -> int:
+        """Total number of participants across all levels."""
+        return self.L1 + self.L2 + self.L3
+
+
+@dataclass
 class RunnerConfig:
     """Top-level configuration for a simulation run.
 
@@ -36,7 +56,7 @@ class RunnerConfig:
         clock_mode: Clock operating mode.
         clock_offset_us: Initial clock offset in microseconds.
         exchange: Exchange configuration.
-        num_participants: Number of DMA clients to register.
+        participants: Per-level participant counts.
         print_config: Output configuration.
     """
     csv_path: str
@@ -45,7 +65,9 @@ class RunnerConfig:
     exchange: ExchangeConfig = field(
         default_factory=lambda: ExchangeConfig(instruments=["XYZ"]),
     )
-    num_participants: int = 1
+    participants: ParticipantsConfig = field(
+        default_factory=ParticipantsConfig,
+    )
     print_config: PrintConfig = field(default_factory=PrintConfig)
 
 
@@ -81,7 +103,11 @@ def load_config(path: str) -> RunnerConfig:
     )
 
     participants_section = data.get("participants", {})
-    num_participants = participants_section.get("num_participants", 1)
+    participants_config = ParticipantsConfig(
+        L1=participants_section.get("L1", 0),
+        L2=participants_section.get("L2", 0),
+        L3=participants_section.get("L3", 0),
+    )
 
     print_section = data.get("print", {})
     print_config = PrintConfig(
@@ -96,6 +122,6 @@ def load_config(path: str) -> RunnerConfig:
         clock_mode=clock_mode,
         clock_offset_us=clock_offset_us,
         exchange=exchange_config,
-        num_participants=num_participants,
+        participants=participants_config,
         print_config=print_config,
     )

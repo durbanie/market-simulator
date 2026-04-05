@@ -13,7 +13,9 @@
         "starting_participant_id": 1
     },
     "participants": {
-        "num_participants": 3
+        "L1": 1,
+        "L2": 1,
+        "L3": 1
     },
     "print": {
         "transactions_every_n": 1,

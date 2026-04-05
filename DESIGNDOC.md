@@ -183,7 +183,7 @@ The exchange exposes a unified request/response API that mirrors the future prot
 
 The public API consists of two methods:
 
-- `handle_registration_request() -> RegistrationResponse` — registers a new participant, assigning an incrementing ID (from a configurable starting point), and returns a `RegistrationResponse` containing the assigned `participant_id`.
+- `handle_registration_request(request: RegistrationRequest) -> RegistrationResponse` — registers a new participant at the requested API level, assigning an incrementing ID (from a configurable starting point), and returns a `RegistrationResponse` containing the assigned `participant_id`.
 - `handle_order_message(request: OrderMessageRequest) -> OrderMessageResponse` — dispatches the request based on its `action` field (`SUBMIT`, `MODIFY`, or `CANCEL`) and returns an `OrderMessageResponse`.
 
 `OrderMessageRequest` contains: `action`, `participant_id`, and optional fields depending on the action: `instrument`, `side`, `order_type`, `price`, `quantity` (for SUBMIT); `order_id`, `price`, `quantity` (for MODIFY); `order_id` (for CANCEL).
@@ -208,11 +208,37 @@ Order rejection can happen for market orders with no available liquidity, or for
 - Order messages with non-positive `quantity` should be rejected.  
 - If the exchange is closed, the order message should be rejected.
 
-Send a sensible rejection reason enum on rejection, or `None` if the status is not `REJECTED`.
+Send a sensible rejection reason enum on rejection, or `None` if the status is not `REJECTED`. Include `INSUFFICIENT_API_LEVEL` as a rejection reason for requests that exceed a participant's registered API level.
 
 Note: The exchange does not perform any balance or position checks. It simply matches orders as they come in. In a later iteration, the Prime Broker will be responsible for balance and position validation, and may revoke a participant's exchange access if necessary.
 
 Create a `client` subdirectory under exchange which provides an interface that direct access participants will ultimately implement. Include an example participant in the same directory to use for testing and simple implementations.
+
+#### API levels
+
+DMA clients register at a specific API level which determines which exchange operations they may use. The levels are hierarchical — each level includes all capabilities of the levels below it:
+
+| Capability | L1 | L2 | L3 |
+|---|---|---|---|
+| Submit / Modify / Cancel | yes | yes | yes |
+| Order query | yes | yes | yes |
+| Exchange status | yes | yes | yes |
+| NBBO (best bid/ask) | yes | yes | yes |
+| Order book depth | no | yes | yes |
+| Transactions query | no | no | yes |
+
+Add an `APILevel` enum (`L1`, `L2`, `L3`) to `exchange_enums.py`.
+
+**Registration:** Add a `RegistrationRequest` dataclass containing `api_level: APILevel`. Change `handle_registration_request` to accept this request. The exchange stores the participant's API level alongside their ID (changing `_participants` from `set[int]` to `dict[int, APILevel]`). For now, the exchange simply accepts the requested level.
+
+**Enforcement — dual layer:**
+
+1. **Client-side:** The `DMAClient` base class stores `api_level` (passed at construction). Before calling an exchange method that exceeds the client's level, the base class raises `RuntimeError`. This is a programming error (the client knows its own level).
+2. **Exchange-side:** `_validate_request_participant` gains an optional `required_level` parameter. When the caller's registered level is below the required level, the exchange returns an `INSUFFICIENT_API_LEVEL` rejection reason. This guards against clients that bypass client-side enforcement.
+
+**NBBO:** Add `NBBORequest(participant_id, instrument)` and `NBBOResponse(request_status, instrument, best_bid, best_ask, rejection_reason)` message types, where `best_bid` and `best_ask` are `Decimal | None` (price only). The exchange implements `handle_nbbo_request` by peeking the best bid/ask from the order book. Available at L1+.
+
+**Configuration:** The runner's participant configuration changes from `{"num_participants": N}` to a per-level breakdown, e.g. `{"L1": 2, "L2": 1, "L3": 1}`. The runner creates and registers clients at the appropriate level. The runner's own internal query client registers at L3.
 
 The order book data structure should implement a price-time priority, and efficiently handle order messages:
 

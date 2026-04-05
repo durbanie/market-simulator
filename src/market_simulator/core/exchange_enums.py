@@ -3,6 +3,13 @@
 from enum import StrEnum
 
 
+class APILevel(StrEnum):
+    """API access level for DMA clients."""
+    L1 = "L1"
+    L2 = "L2"
+    L3 = "L3"
+
+
 class Side(StrEnum):
     """Order side: buy or sell."""
     BUY = "BUY"
@@ -34,6 +41,7 @@ class RejectionReason(StrEnum):
     EXCHANGE_CLOSED = "EXCHANGE_CLOSED"
     NO_LIQUIDITY = "NO_LIQUIDITY"
     UNAUTHORIZED_PARTICIPANT = "UNAUTHORIZED_PARTICIPANT"
+    INSUFFICIENT_API_LEVEL = "INSUFFICIENT_API_LEVEL"
 
 
 class ExchangeState(StrEnum):
