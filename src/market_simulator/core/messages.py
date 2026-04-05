@@ -246,3 +246,28 @@ class TransactionsResponse:
     request_status: RequestStatus
     transactions: list | None = None
     rejection_reason: RejectionReason | None = None
+
+
+@dataclass
+class TransactionFeedSubscribeRequest:
+    """Request to subscribe to the transaction feed.
+
+    Subscription validates L3 access. The feed itself is a shared
+    data structure returned by the exchange out-of-band.
+
+    Attributes:
+        participant_id: The requesting participant's ID.
+    """
+    participant_id: int
+
+
+@dataclass
+class TransactionFeedSubscribeResponse:
+    """Response to a transaction feed subscription request.
+
+    Attributes:
+        request_status: Outcome of the request.
+        rejection_reason: Set only when request_status is REJECTED.
+    """
+    request_status: RequestStatus
+    rejection_reason: RejectionReason | None = None
