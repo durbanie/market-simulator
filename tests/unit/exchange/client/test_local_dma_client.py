@@ -432,3 +432,103 @@ class TestAPILevelClientEnforcement:
         exchange = Exchange(config, clock)
         client = LocalDMAClient(exchange, api_level=APILevel.L2)
         assert client.api_level == APILevel.L2
+
+
+# -- Transaction feed ---------------------------------------------------------
+
+
+class TestTransactionFeed:
+
+    def test_subscribe_and_poll(self) -> None:
+        client, exchange = _make_leveled_client(APILevel.L3)
+        seller = LocalDMAClient(exchange, api_level=APILevel.L3)
+        seller.register()
+
+        client.subscribe_transaction_feed()
+
+        seller.submit_order(
+            instrument="XYZ", side=Side.SELL,
+            order_type=OrderType.LIMIT, price=Decimal("50"), quantity=Decimal("5"),
+        )
+        client.submit_order(
+            instrument="XYZ", side=Side.BUY,
+            order_type=OrderType.MARKET, quantity=Decimal("5"),
+        )
+
+        txns = client.poll_transactions()
+        assert len(txns) == 1
+        assert txns[0].price == Decimal("50")
+
+    def test_poll_advances_cursor(self) -> None:
+        client, exchange = _make_leveled_client(APILevel.L3)
+        seller = LocalDMAClient(exchange, api_level=APILevel.L3)
+        seller.register()
+        client.subscribe_transaction_feed()
+
+        # First fill.
+        seller.submit_order(
+            instrument="XYZ", side=Side.SELL,
+            order_type=OrderType.LIMIT, price=Decimal("50"), quantity=Decimal("5"),
+        )
+        client.submit_order(
+            instrument="XYZ", side=Side.BUY,
+            order_type=OrderType.MARKET, quantity=Decimal("5"),
+        )
+        first = client.poll_transactions()
+        assert len(first) == 1
+
+        # Second fill.
+        seller.submit_order(
+            instrument="XYZ", side=Side.SELL,
+            order_type=OrderType.LIMIT, price=Decimal("60"), quantity=Decimal("3"),
+        )
+        client.submit_order(
+            instrument="XYZ", side=Side.BUY,
+            order_type=OrderType.MARKET, quantity=Decimal("3"),
+        )
+        second = client.poll_transactions()
+        assert len(second) == 1
+        assert second[0].price == Decimal("60")
+
+    def test_poll_empty_when_no_new(self) -> None:
+        client, _ = _make_leveled_client(APILevel.L3)
+        client.subscribe_transaction_feed()
+        assert client.poll_transactions() == []
+
+    def test_peek_last_transaction(self) -> None:
+        client, exchange = _make_leveled_client(APILevel.L3)
+        seller = LocalDMAClient(exchange, api_level=APILevel.L3)
+        seller.register()
+        client.subscribe_transaction_feed()
+
+        assert client.peek_last_transaction() is None
+
+        seller.submit_order(
+            instrument="XYZ", side=Side.SELL,
+            order_type=OrderType.LIMIT, price=Decimal("50"), quantity=Decimal("5"),
+        )
+        client.submit_order(
+            instrument="XYZ", side=Side.BUY,
+            order_type=OrderType.MARKET, quantity=Decimal("5"),
+        )
+        assert client.peek_last_transaction().price == Decimal("50")
+
+    def test_poll_before_subscribe_raises(self) -> None:
+        client, _ = _make_leveled_client(APILevel.L3)
+        with pytest.raises(RuntimeError, match="must subscribe"):
+            client.poll_transactions()
+
+    def test_peek_before_subscribe_raises(self) -> None:
+        client, _ = _make_leveled_client(APILevel.L3)
+        with pytest.raises(RuntimeError, match="must subscribe"):
+            client.peek_last_transaction()
+
+    def test_l1_subscribe_raises(self) -> None:
+        client, _ = _make_leveled_client(APILevel.L1)
+        with pytest.raises(RuntimeError, match="requires L3"):
+            client.subscribe_transaction_feed()
+
+    def test_l2_subscribe_raises(self) -> None:
+        client, _ = _make_leveled_client(APILevel.L2)
+        with pytest.raises(RuntimeError, match="requires L3"):
+            client.subscribe_transaction_feed()

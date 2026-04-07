@@ -7,6 +7,7 @@ from typing import IO
 
 from market_simulator.core.clock import Clock
 from market_simulator.core.exchange_enums import APILevel, Action, OrderType, Side
+from market_simulator.core.messages import DepthRequest
 from market_simulator.exchange.client.local_dma_client import LocalDMAClient
 from market_simulator.exchange.exchange import Exchange
 from market_simulator.runner.config import RunnerConfig
@@ -49,9 +50,9 @@ class Runner:
         # Register a dedicated L3 client for runner queries (depth, txns).
         self._query_client = LocalDMAClient(self._exchange, api_level=APILevel.L3)
         self._query_client.register()
+        self._query_client.subscribe_transaction_feed()
 
         self._message_count = 0
-        self._last_txn_printed = 0
 
     @property
     def clock(self) -> Clock:
@@ -133,12 +134,7 @@ class Runner:
 
     def _print_transactions(self) -> None:
         """Print transactions added since the last print."""
-        from market_simulator.core.messages import TransactionsRequest
-
-        resp = self._exchange.handle_transactions_request(
-            TransactionsRequest(participant_id=self._query_client.participant_id),
-        )
-        new_txns = resp.transactions[self._last_txn_printed:]
+        new_txns = self._query_client.poll_transactions()
         if new_txns:
             self._output.write(f"--- Transactions (message {self._message_count}) ---\n")
             for txn in new_txns:
@@ -146,12 +142,9 @@ class Runner:
                     f"  txn={txn.transaction_id} {txn.instrument} "
                     f"price={txn.price} qty={txn.quantity}\n",
                 )
-            self._last_txn_printed = len(resp.transactions)
 
     def _print_depth(self) -> None:
         """Print order book depth for configured instruments."""
-        from market_simulator.core.messages import DepthRequest, TransactionsRequest
-
         pc = self._config.print_config
         instruments = (
             pc.depth_instruments
@@ -160,12 +153,8 @@ class Runner:
         )
 
         # Get last transaction price.
-        txn_resp = self._exchange.handle_transactions_request(
-            TransactionsRequest(participant_id=self._query_client.participant_id),
-        )
-        last_txn_price = (
-            txn_resp.transactions[-1].price if txn_resp.transactions else None
-        )
+        last_txn = self._query_client.peek_last_transaction()
+        last_txn_price = last_txn.price if last_txn is not None else None
 
         self._output.write(f"--- Depth (message {self._message_count}) ---\n")
         for instrument in instruments:

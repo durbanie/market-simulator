@@ -21,6 +21,7 @@ from market_simulator.core.messages import (
     OrderMessageResponse,
     OrderQueryRequest,
     RegistrationRequest,
+    TransactionFeedSubscribeRequest,
     TransactionsRequest,
 )
 from market_simulator.exchange.exchange import Exchange, ExchangeConfig
@@ -1373,3 +1374,71 @@ class TestAPILevelEnforcement:
         )
         assert resp.request_status == RequestStatus.ACCEPTED
         assert resp.transactions == []
+
+
+class TestTransactionFeedSubscribe:
+
+    def test_l3_can_subscribe(self):
+        ex = _make_exchange()
+        pid = _register(ex, APILevel.L3)
+        resp, feed = ex.handle_transaction_feed_subscribe(
+            TransactionFeedSubscribeRequest(participant_id=pid),
+        )
+        assert resp.request_status == RequestStatus.ACCEPTED
+        assert feed is not None
+        assert feed is ex.transaction_feed
+
+    def test_l1_rejected(self):
+        ex = _make_exchange()
+        pid = _register(ex, APILevel.L1)
+        resp, feed = ex.handle_transaction_feed_subscribe(
+            TransactionFeedSubscribeRequest(participant_id=pid),
+        )
+        assert resp.request_status == RequestStatus.REJECTED
+        assert resp.rejection_reason == RejectionReason.INSUFFICIENT_API_LEVEL
+        assert feed is None
+
+    def test_l2_rejected(self):
+        ex = _make_exchange()
+        pid = _register(ex, APILevel.L2)
+        resp, feed = ex.handle_transaction_feed_subscribe(
+            TransactionFeedSubscribeRequest(participant_id=pid),
+        )
+        assert resp.request_status == RequestStatus.REJECTED
+        assert resp.rejection_reason == RejectionReason.INSUFFICIENT_API_LEVEL
+        assert feed is None
+
+    def test_unregistered_rejected(self):
+        ex = _make_exchange()
+        resp, feed = ex.handle_transaction_feed_subscribe(
+            TransactionFeedSubscribeRequest(participant_id=999),
+        )
+        assert resp.request_status == RequestStatus.REJECTED
+        assert resp.rejection_reason == RejectionReason.UNREGISTERED_PARTICIPANT
+        assert feed is None
+
+    def test_feed_populated_after_matching(self):
+        ex = _make_exchange()
+        ex.open()
+        maker = _register(ex)
+        taker = _register(ex)
+        _submit_limit(ex, maker, "XYZ", Side.SELL, Decimal("50"), Decimal("10"))
+        _submit_market(ex, taker, "XYZ", Side.BUY, Decimal("10"))
+        feed = ex.transaction_feed
+        assert feed.last_transaction_id == 1
+        txns = feed.read_from(0)
+        assert len(txns) == 1
+        assert txns[0].price == Decimal("50")
+
+    def test_handle_transactions_request_still_works(self):
+        ex = _make_exchange()
+        ex.open()
+        maker = _register(ex)
+        taker = _register(ex)
+        _submit_limit(ex, maker, "XYZ", Side.SELL, Decimal("50"), Decimal("10"))
+        _submit_market(ex, taker, "XYZ", Side.BUY, Decimal("10"))
+        resp = ex.handle_transactions_request(
+            TransactionsRequest(participant_id=maker),
+        )
+        assert resp.request_status == RequestStatus.ACCEPTED
+        assert len(resp.transactions) == 1

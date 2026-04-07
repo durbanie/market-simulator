@@ -21,10 +21,14 @@ from market_simulator.core.messages import (
     OrderQueryResponse,
     RegistrationRequest,
     RegistrationResponse,
+    TransactionFeedSubscribeRequest,
+    TransactionFeedSubscribeResponse,
     TransactionsRequest,
     TransactionsResponse,
 )
+from market_simulator.exchange.data import Transaction
 from market_simulator.exchange.exchange import Exchange
+from market_simulator.exchange.transaction_feed import TransactionFeed
 
 
 class DMAClient(ABC):
@@ -42,6 +46,8 @@ class DMAClient(ABC):
         self._exchange = exchange
         self._api_level = api_level
         self._participant_id: int | None = None
+        self._transaction_feed: TransactionFeed | None = None
+        self._last_seen_transaction_id: int = 0
 
     @property
     def participant_id(self) -> int | None:
@@ -130,6 +136,52 @@ class DMAClient(ABC):
         response = self._exchange.handle_transactions_request(request)
         self._on_transactions_response(response)
         return response
+
+    # -- Transaction feed (concrete) ------------------------------------------
+
+    def subscribe_transaction_feed(
+        self,
+    ) -> TransactionFeedSubscribeResponse:
+        """Subscribe to the shared transaction feed. Requires L3."""
+        if self._participant_id is None:
+            raise RuntimeError("Client must register before subscribing")
+        if self._api_level < APILevel.L3:
+            raise RuntimeError(
+                f"Transaction feed requires L3 (client is {self._api_level})",
+            )
+        response, feed = self._exchange.handle_transaction_feed_subscribe(
+            TransactionFeedSubscribeRequest(
+                participant_id=self._participant_id,
+            ),
+        )
+        if feed is not None:
+            self._transaction_feed = feed
+        return response
+
+    def poll_transactions(self) -> list[Transaction]:
+        """Read new transactions from the feed since last poll.
+
+        Returns an empty list if no new transactions.
+        Advances the cursor automatically.
+        """
+        if self._transaction_feed is None:
+            raise RuntimeError(
+                "Client must subscribe to transaction feed first",
+            )
+        new_txns = self._transaction_feed.read_from(
+            self._last_seen_transaction_id,
+        )
+        if new_txns:
+            self._last_seen_transaction_id = new_txns[-1].transaction_id
+        return new_txns
+
+    def peek_last_transaction(self) -> Transaction | None:
+        """Peek at the most recent transaction without advancing cursor."""
+        if self._transaction_feed is None:
+            raise RuntimeError(
+                "Client must subscribe to transaction feed first",
+            )
+        return self._transaction_feed.peek_last()
 
     # -- Abstract response callbacks ------------------------------------------
 

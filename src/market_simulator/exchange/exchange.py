@@ -27,11 +27,14 @@ from market_simulator.core.messages import (
     OrderQueryResponse,
     RegistrationRequest,
     RegistrationResponse,
+    TransactionFeedSubscribeRequest,
+    TransactionFeedSubscribeResponse,
     TransactionsRequest,
     TransactionsResponse,
 )
 from market_simulator.exchange.data import Order, Transaction
 from market_simulator.exchange.order_book import DepthLevel, OrderBook
+from market_simulator.exchange.transaction_feed import TransactionFeed
 
 
 @dataclass
@@ -80,7 +83,7 @@ class Exchange:
             instrument: OrderBook(instrument)
             for instrument in config.instruments
         }
-        self._transactions: list[Transaction] = []
+        self._transaction_feed = TransactionFeed(config.starting_transaction_id)
 
     # -- Open / Close -------------------------------------------------------
 
@@ -274,7 +277,7 @@ class Exchange:
         self._match_order(order, book)
         if order.remaining_quantity > 0:
             # Rest remainder at the last fill price.
-            order.price = self._transactions[-1].price
+            order.price = self._transaction_feed.peek_last().price
             book.add_order(order)
         request_status = (
             RequestStatus.FILLED if order.status == OrderStatus.FILLED
@@ -352,7 +355,7 @@ class Exchange:
                 taker_fee=taker_fee,
             )
             self._next_transaction_id += 1
-            self._transactions.append(txn)
+            self._transaction_feed.append(txn)
 
     # -- Order modification -------------------------------------------------
 
@@ -549,8 +552,41 @@ class Exchange:
             )
         return TransactionsResponse(
             request_status=RequestStatus.ACCEPTED,
-            transactions=list(self._transactions),
+            transactions=self._transaction_feed.read_from(0),
         )
+
+    def handle_transaction_feed_subscribe(
+        self, request: TransactionFeedSubscribeRequest,
+    ) -> tuple[TransactionFeedSubscribeResponse, TransactionFeed | None]:
+        """Validate L3 access and return the shared transaction feed.
+
+        Returns a tuple of (response, feed). The feed reference is
+        returned out-of-band (not in the message) because in network
+        mode the message would go over the wire while the feed
+        transport is established separately.
+        """
+        rejection = self._validate_request_participant(
+            request.participant_id, required_level=APILevel.L3,
+        )
+        if rejection is not None:
+            return (
+                TransactionFeedSubscribeResponse(
+                    request_status=RequestStatus.REJECTED,
+                    rejection_reason=rejection,
+                ),
+                None,
+            )
+        return (
+            TransactionFeedSubscribeResponse(
+                request_status=RequestStatus.ACCEPTED,
+            ),
+            self._transaction_feed,
+        )
+
+    @property
+    def transaction_feed(self) -> TransactionFeed:
+        """The shared transaction feed."""
+        return self._transaction_feed
 
     # -- Internal helpers ---------------------------------------------------
 
