@@ -2,6 +2,8 @@
 
 from decimal import Decimal
 
+import pytest
+
 from market_simulator.exchange.data import Transaction
 from market_simulator.exchange.transaction_feed import TransactionFeed
 
@@ -101,6 +103,28 @@ class TestPeekLast:
         feed.append(_make_txn(2, "51.00"))
         assert feed.peek_last().transaction_id == 2
         assert feed.peek_last().price == Decimal("51.00")
+
+
+class TestAppendValidation:
+
+    def test_wrong_id_raises(self):
+        feed = TransactionFeed(starting_transaction_id=1)
+        feed.append(_make_txn(1))
+        with pytest.raises(ValueError, match="does not match expected index"):
+            feed.append(_make_txn(5))
+
+    def test_duplicate_id_raises(self):
+        feed = TransactionFeed(starting_transaction_id=1)
+        feed.append(_make_txn(1))
+        with pytest.raises(ValueError, match="does not match expected index"):
+            feed.append(_make_txn(1))
+
+    def test_sequential_ids_ok(self):
+        feed = TransactionFeed(starting_transaction_id=10)
+        feed.append(_make_txn(10))
+        feed.append(_make_txn(11))
+        feed.append(_make_txn(12))
+        assert feed.last_transaction_id == 12
 
 
 class TestLastTransactionId:

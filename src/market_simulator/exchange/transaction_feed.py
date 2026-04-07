@@ -26,6 +26,13 @@ class TransactionFeed:
 
     def append(self, transaction: Transaction) -> None:
         """Append a transaction. Called by the exchange only."""
+        expected_index = transaction.transaction_id - self._starting_id
+        if expected_index != len(self._transactions):
+            raise ValueError(
+                f"Transaction ID {transaction.transaction_id} does not match "
+                f"expected index {len(self._transactions)} "
+                f"(starting_id={self._starting_id})",
+            )
         self._transactions.append(transaction)
 
     def read_from(self, after_id: int = 0) -> list[Transaction]:
@@ -44,8 +51,10 @@ class TransactionFeed:
             return []
         start_index = after_id - self._starting_id + 1
         if start_index < 0:
+            # TODO: Log warning — cursor is before the feed's starting ID.
             start_index = 0
         if start_index >= len(self._transactions):
+            # TODO: Log warning if start_index > len (cursor beyond feed).
             return []
         return list(self._transactions[start_index:])
 
