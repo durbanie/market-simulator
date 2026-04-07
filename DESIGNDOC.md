@@ -240,6 +240,18 @@ Add an `APILevel` enum (`L1`, `L2`, `L3`) to `exchange_enums.py`.
 
 **Configuration:** The runner's participant configuration changes from `{"num_participants": N}` to a per-level breakdown, e.g. `{"L1": 2, "L2": 1, "L3": 1}`. The runner creates and registers clients at the appropriate level. The runner's own internal query client registers at L3.
 
+#### Market data feeds
+
+L3 participants can subscribe to broadcast market data feeds for streaming updates, modeled after real exchange feeds (e.g., ITCH/PITCH). Feeds are shared, append-only data structures — the exchange appends; consumers read from a cursor. The feed does not track subscribers.
+
+**Transaction feed:** A shared `TransactionFeed` that the exchange appends to during order matching. Consumers call `read_from(after_id)` to get transactions with `transaction_id > after_id`, using sequential IDs for O(1) index calculation. `peek_last()` returns the most recent transaction without advancing any cursor. The feed validates on append that each transaction ID matches the expected sequential position.
+
+**Subscription:** L3 clients subscribe via `TransactionFeedSubscribeRequest(participant_id)` / `TransactionFeedSubscribeResponse(request_status, rejection_reason)`. The exchange validates L3 access and returns the feed reference out-of-band as a tuple `(response, feed | None)` — the response is the serializable message (which will go over the wire in network mode), while the feed reference is established separately (in network mode, this would be a separate transport channel). The `DMAClient` base class stores the feed reference and provides concrete `poll_transactions()` (read + advance cursor) and `peek_last_transaction()` methods.
+
+The backward-compatible `handle_transactions_request` still works by reading the full feed from the beginning. The runner uses the feed for both transaction printing (poll) and last transaction price display (peek).
+
+**Order book change stream (future):** L3 participants will also be able to receive all changes to the resting order book. This is not yet implemented but the feed pattern established by the transaction feed is designed to extend to order book updates.
+
 The order book data structure should implement a price-time priority, and efficiently handle order messages:
 
 - Use `SortedDict` from `sortedcontainers` for both bids and asks (negated key for bids).  

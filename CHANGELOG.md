@@ -1,5 +1,35 @@
 # Changelog
 
+## v1.1.13 — Shared broadcast transaction feed
+
+- Add `TransactionFeed` class in `exchange/transaction_feed.py`: shared append-only feed with cursor-based reads using O(1) index calculation from sequential transaction IDs
+- Replace `Exchange._transactions` list with `TransactionFeed`; matching appends to feed
+- Add `TransactionFeedSubscribeRequest` / `TransactionFeedSubscribeResponse` messages
+- Add `handle_transaction_feed_subscribe` on `Exchange`: validates L3 access, returns feed reference out-of-band as tuple for network-mode extensibility
+- Add `subscribe_transaction_feed`, `poll_transactions`, `peek_last_transaction` to `DMAClient` base class
+- Runner uses feed for transaction printing (poll) and last txn price (peek) instead of `handle_transactions_request`
+- Append validates transaction ID matches expected sequential position
+- Backward-compatible `handle_transactions_request` still works via `read_from(0)`
+- 26 new tests: 15 for TransactionFeed, 5 for exchange subscribe, 8 for client feed methods
+
+## v1.1.12 — API levels (L1, L2, L3)
+
+- Add `APILevel` enum (`L1`, `L2`, `L3`) to `exchange_enums.py` with hierarchical comparison
+- Add `RegistrationRequest(api_level)` dataclass; `handle_registration_request` now accepts it
+- Exchange stores participant API level in `_participants: dict[int, APILevel]`
+- Dual-layer enforcement: client-side `RuntimeError` in `DMAClient` base class + exchange-side `INSUFFICIENT_API_LEVEL` rejection in `_validate_request_participant`
+- Add `NBBORequest` / `NBBOResponse` messages and `handle_nbbo_request` on Exchange (L1+)
+- Depth requires L2+, transactions query requires L3
+- Runner config changes from `num_participants` to per-level `ParticipantsConfig(L1, L2, L3)`
+- Add `INSUFFICIENT_API_LEVEL` rejection reason
+- Full capability inheritance tests for each API level
+
+## v1.1.11 — Participant ID validation on query requests
+
+- Add participant ID validation to all query request handlers (`handle_exchange_status_request`, `handle_depth_request`, `handle_order_query_request`, `handle_transactions_request`)
+- Unify validation into `_validate_request_participant` helper method on Exchange
+- Queries from unregistered participants are rejected with `UNREGISTERED_PARTICIPANT`
+
 ## v1.1.10 — Runner and config
 
 - Add `RunnerConfig` and `PrintConfig` dataclasses in `runner/config.py` with `load_config()` for JSON parsing
