@@ -1442,3 +1442,60 @@ class TestTransactionFeedSubscribe:
         )
         assert resp.request_status == RequestStatus.ACCEPTED
         assert len(resp.transactions) == 1
+
+
+class TestTransactionListeners:
+
+    def test_listener_called_on_match(self):
+        ex = _make_exchange()
+        ex.open()
+        received = []
+        ex.add_transaction_listener(lambda txn: received.append(txn))
+        maker = _register(ex)
+        taker = _register(ex)
+        _submit_limit(ex, maker, "XYZ", Side.SELL, Decimal("50"), Decimal("10"))
+        _submit_market(ex, taker, "XYZ", Side.BUY, Decimal("10"))
+        assert len(received) == 1
+        assert received[0].price == Decimal("50")
+        assert received[0].quantity == Decimal("10")
+
+    def test_multiple_listeners_all_called(self):
+        ex = _make_exchange()
+        ex.open()
+        received_a = []
+        received_b = []
+        ex.add_transaction_listener(lambda txn: received_a.append(txn))
+        ex.add_transaction_listener(lambda txn: received_b.append(txn))
+        maker = _register(ex)
+        taker = _register(ex)
+        _submit_limit(ex, maker, "XYZ", Side.SELL, Decimal("50"), Decimal("10"))
+        _submit_market(ex, taker, "XYZ", Side.BUY, Decimal("10"))
+        assert len(received_a) == 1
+        assert len(received_b) == 1
+
+    def test_listener_receives_same_transaction_as_feed(self):
+        ex = _make_exchange()
+        ex.open()
+        received = []
+        ex.add_transaction_listener(lambda txn: received.append(txn))
+        maker = _register(ex)
+        taker = _register(ex)
+        _submit_limit(ex, maker, "XYZ", Side.SELL, Decimal("50"), Decimal("10"))
+        _submit_market(ex, taker, "XYZ", Side.BUY, Decimal("10"))
+        feed_txns = ex.transaction_feed.read_from(0)
+        assert received[0] is feed_txns[0]
+
+    def test_listener_called_per_fill(self):
+        ex = _make_exchange()
+        ex.open()
+        received = []
+        ex.add_transaction_listener(lambda txn: received.append(txn))
+        maker1 = _register(ex)
+        maker2 = _register(ex)
+        taker = _register(ex)
+        _submit_limit(ex, maker1, "XYZ", Side.SELL, Decimal("50"), Decimal("5"))
+        _submit_limit(ex, maker2, "XYZ", Side.SELL, Decimal("51"), Decimal("5"))
+        _submit_market(ex, taker, "XYZ", Side.BUY, Decimal("10"))
+        assert len(received) == 2
+        assert received[0].price == Decimal("50")
+        assert received[1].price == Decimal("51")

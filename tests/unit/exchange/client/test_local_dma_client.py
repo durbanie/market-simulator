@@ -532,3 +532,124 @@ class TestTransactionFeed:
         client, _ = _make_leveled_client(APILevel.L2)
         with pytest.raises(RuntimeError, match="requires L3"):
             client.subscribe_transaction_feed()
+
+
+# -- FeedHandler integration ---------------------------------------------------
+
+
+def _make_client_with_handler(
+    level: APILevel = APILevel.L3,
+) -> tuple[LocalDMAClient, Exchange]:
+    """Create a registered LocalDMAClient wired to a FeedHandler."""
+    from market_simulator.exchange.feed_handler import FeedHandler
+    config = ExchangeConfig(instruments=["XYZ"])
+    clock = Clock(mode=ClockMode.FAST_SIMULATION)
+    exchange = Exchange(config, clock)
+    exchange.open()
+    handler = FeedHandler(exchange, starting_transaction_id=config.starting_transaction_id)
+    client = LocalDMAClient(exchange, api_level=level, feed_handler=handler)
+    client.register()
+    return client, exchange
+
+
+class TestFeedHandlerIntegration:
+
+    def test_register_registers_with_feed_handler(self) -> None:
+        client, exchange = _make_client_with_handler()
+        # If registered with feed handler, subscribing should work
+        # without calling exchange's handle_transaction_feed_subscribe.
+        resp = client.subscribe_transaction_feed()
+        assert resp.request_status == RequestStatus.ACCEPTED
+
+    def test_subscribe_goes_to_feed_handler(self) -> None:
+        client, exchange = _make_client_with_handler()
+        client.subscribe_transaction_feed()
+        seller = LocalDMAClient(exchange, api_level=APILevel.L3)
+        seller.register()
+        seller.submit_order(
+            instrument="XYZ", side=Side.SELL,
+            order_type=OrderType.LIMIT, price=Decimal("50"), quantity=Decimal("5"),
+        )
+        client.submit_order(
+            instrument="XYZ", side=Side.BUY,
+            order_type=OrderType.MARKET, quantity=Decimal("5"),
+        )
+        txns = client.poll_transactions()
+        assert len(txns) == 1
+        assert txns[0].price == Decimal("50")
+
+    def test_poll_reads_from_feed_handler(self) -> None:
+        client, exchange = _make_client_with_handler()
+        client.subscribe_transaction_feed()
+        seller = LocalDMAClient(exchange, api_level=APILevel.L3)
+        seller.register()
+        # First trade.
+        seller.submit_order(
+            instrument="XYZ", side=Side.SELL,
+            order_type=OrderType.LIMIT, price=Decimal("50"), quantity=Decimal("5"),
+        )
+        client.submit_order(
+            instrument="XYZ", side=Side.BUY,
+            order_type=OrderType.MARKET, quantity=Decimal("5"),
+        )
+        first = client.poll_transactions()
+        assert len(first) == 1
+        # Second trade — cursor should have advanced.
+        seller.submit_order(
+            instrument="XYZ", side=Side.SELL,
+            order_type=OrderType.LIMIT, price=Decimal("60"), quantity=Decimal("3"),
+        )
+        client.submit_order(
+            instrument="XYZ", side=Side.BUY,
+            order_type=OrderType.MARKET, quantity=Decimal("3"),
+        )
+        second = client.poll_transactions()
+        assert len(second) == 1
+        assert second[0].price == Decimal("60")
+
+    def test_peek_reads_from_feed_handler(self) -> None:
+        client, exchange = _make_client_with_handler()
+        client.subscribe_transaction_feed()
+        assert client.peek_last_transaction() is None
+        seller = LocalDMAClient(exchange, api_level=APILevel.L3)
+        seller.register()
+        seller.submit_order(
+            instrument="XYZ", side=Side.SELL,
+            order_type=OrderType.LIMIT, price=Decimal("50"), quantity=Decimal("5"),
+        )
+        client.submit_order(
+            instrument="XYZ", side=Side.BUY,
+            order_type=OrderType.MARKET, quantity=Decimal("5"),
+        )
+        assert client.peek_last_transaction().price == Decimal("50")
+
+    def test_on_transaction_called_on_push(self) -> None:
+        """Verify the _on_transaction callback fires during matching."""
+        from market_simulator.exchange.feed_handler import FeedHandler
+        config = ExchangeConfig(instruments=["XYZ"])
+        clock = Clock(mode=ClockMode.FAST_SIMULATION)
+        exchange = Exchange(config, clock)
+        exchange.open()
+        handler = FeedHandler(exchange, starting_transaction_id=config.starting_transaction_id)
+
+        received = []
+
+        class TrackingClient(LocalDMAClient):
+            def _on_transaction(self, transaction):
+                received.append(transaction)
+
+        client = TrackingClient(exchange, api_level=APILevel.L3, feed_handler=handler)
+        client.register()
+        client.subscribe_transaction_feed()
+        seller = LocalDMAClient(exchange, api_level=APILevel.L3)
+        seller.register()
+        seller.submit_order(
+            instrument="XYZ", side=Side.SELL,
+            order_type=OrderType.LIMIT, price=Decimal("50"), quantity=Decimal("5"),
+        )
+        client.submit_order(
+            instrument="XYZ", side=Side.BUY,
+            order_type=OrderType.MARKET, quantity=Decimal("5"),
+        )
+        assert len(received) == 1
+        assert received[0].price == Decimal("50")
