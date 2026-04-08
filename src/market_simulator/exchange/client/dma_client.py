@@ -5,7 +5,10 @@ wraps housekeeping (e.g. storing participant_id), and dispatches
 responses to abstract callback methods that subclasses override.
 """
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
 
 from market_simulator.core.exchange_enums import APILevel
 from market_simulator.core.messages import (
@@ -30,6 +33,9 @@ from market_simulator.exchange.data import Transaction
 from market_simulator.exchange.exchange import Exchange
 from market_simulator.exchange.transaction_feed import TransactionFeed
 
+if TYPE_CHECKING:
+    from market_simulator.exchange.feed_handler import FeedHandler
+
 
 class DMAClient(ABC):
     """Base DMA client for exchange interaction.
@@ -40,13 +46,22 @@ class DMAClient(ABC):
     Args:
         exchange: The exchange instance to communicate with.
         api_level: The API access level for this client.
+        feed_handler: Optional FeedHandler for push-based market data.
+            When provided, transaction subscriptions go through the
+            feed handler instead of the exchange.
     """
 
-    def __init__(self, exchange: Exchange, api_level: APILevel) -> None:
+    def __init__(
+        self,
+        exchange: Exchange,
+        api_level: APILevel,
+        feed_handler: FeedHandler | None = None,
+    ) -> None:
         self._exchange = exchange
         self._api_level = api_level
+        self._feed_handler = feed_handler
         self._participant_id: int | None = None
-        self._transaction_feed: TransactionFeed | None = None
+        self._legacy_transaction_feed: TransactionFeed | None = None
         self._last_seen_transaction_id: int = 0
 
     @property
@@ -62,8 +77,9 @@ class DMAClient(ABC):
     # -- Exchange communication (concrete) ------------------------------------
 
     def register(self) -> RegistrationResponse:
-        """Register with the exchange, store participant_id, and
-        dispatch to the ``_on_registration_response`` callback.
+        """Register with the exchange and feed handler, store
+        participant_id, and dispatch to the
+        ``_on_registration_response`` callback.
 
         May only be called once per client.
         """
@@ -73,6 +89,10 @@ class DMAClient(ABC):
             RegistrationRequest(api_level=self._api_level),
         )
         self._participant_id = response.participant_id
+        if self._feed_handler is not None:
+            self._feed_handler.register_participant(
+                response.participant_id, self._api_level,
+            )
         self._on_registration_response(response)
         return response
 
@@ -142,20 +162,28 @@ class DMAClient(ABC):
     def subscribe_transaction_feed(
         self,
     ) -> TransactionFeedSubscribeResponse:
-        """Subscribe to the shared transaction feed. Requires L3."""
+        """Subscribe to the transaction feed. Requires L3.
+
+        When a feed handler is present, subscribes through it for
+        push-based delivery. Otherwise falls back to the legacy
+        exchange subscription path.
+        """
         if self._participant_id is None:
             raise RuntimeError("Client must register before subscribing")
         if self._api_level < APILevel.L3:
             raise RuntimeError(
                 f"Transaction feed requires L3 (client is {self._api_level})",
             )
+        if self._feed_handler is not None:
+            return self._feed_handler.subscribe(self._participant_id, self)
+        # Legacy path: direct exchange subscription.
         response, feed = self._exchange.handle_transaction_feed_subscribe(
             TransactionFeedSubscribeRequest(
                 participant_id=self._participant_id,
             ),
         )
         if feed is not None:
-            self._transaction_feed = feed
+            self._legacy_transaction_feed = feed
         return response
 
     def poll_transactions(self) -> list[Transaction]:
@@ -164,24 +192,25 @@ class DMAClient(ABC):
         Returns an empty list if no new transactions.
         Advances the cursor automatically.
         """
-        if self._transaction_feed is None:
-            raise RuntimeError(
-                "Client must subscribe to transaction feed first",
-            )
-        new_txns = self._transaction_feed.read_from(
-            self._last_seen_transaction_id,
-        )
+        feed = self._get_transaction_feed()
+        new_txns = feed.read_from(self._last_seen_transaction_id)
         if new_txns:
             self._last_seen_transaction_id = new_txns[-1].transaction_id
         return new_txns
 
     def peek_last_transaction(self) -> Transaction | None:
         """Peek at the most recent transaction without advancing cursor."""
-        if self._transaction_feed is None:
-            raise RuntimeError(
-                "Client must subscribe to transaction feed first",
-            )
-        return self._transaction_feed.peek_last()
+        return self._get_transaction_feed().peek_last()
+
+    def _get_transaction_feed(self) -> TransactionFeed:
+        """Resolve the transaction feed from feed handler or legacy ref."""
+        if self._feed_handler is not None:
+            return self._feed_handler.transaction_feed
+        if self._legacy_transaction_feed is not None:
+            return self._legacy_transaction_feed
+        raise RuntimeError(
+            "Client must subscribe to transaction feed first",
+        )
 
     # -- Abstract response callbacks ------------------------------------------
 
@@ -219,3 +248,10 @@ class DMAClient(ABC):
     def _on_transactions_response(
         self, response: TransactionsResponse,
     ) -> None: ...
+
+    @abstractmethod
+    def _on_transaction(
+        self, transaction: Transaction,
+    ) -> None:
+        """Called by the FeedHandler for each new transaction (push)."""
+        ...

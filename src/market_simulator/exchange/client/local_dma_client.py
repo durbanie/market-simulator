@@ -4,7 +4,10 @@ Has no autonomous behavior.  The runner, test fixtures, or CSV-based
 scenarios call its public methods to direct exchange interaction.
 """
 
+from __future__ import annotations
+
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from market_simulator.core.exchange_enums import (
     APILevel,
@@ -28,7 +31,11 @@ from market_simulator.core.messages import (
     TransactionsResponse,
 )
 from market_simulator.exchange.client.dma_client import DMAClient
+from market_simulator.exchange.data import Transaction
 from market_simulator.exchange.exchange import Exchange
+
+if TYPE_CHECKING:
+    from market_simulator.exchange.feed_handler import FeedHandler
 
 
 class LocalDMAClient(DMAClient):
@@ -41,12 +48,16 @@ class LocalDMAClient(DMAClient):
     Args:
         exchange: The exchange instance to interact with.
         api_level: The API access level for this client.
+        feed_handler: Optional FeedHandler for push-based market data.
     """
 
     def __init__(
-        self, exchange: Exchange, api_level: APILevel = APILevel.L3,
+        self,
+        exchange: Exchange,
+        api_level: APILevel = APILevel.L3,
+        feed_handler: FeedHandler | None = None,
     ) -> None:
-        super().__init__(exchange, api_level)
+        super().__init__(exchange, api_level, feed_handler)
 
     # -- Order convenience methods (field-level API) --------------------------
 
@@ -174,5 +185,10 @@ class LocalDMAClient(DMAClient):
 
     def _on_transactions_response(
         self, response: TransactionsResponse,
+    ) -> None:
+        pass
+
+    def _on_transaction(
+        self, transaction: Transaction,
     ) -> None:
         pass
