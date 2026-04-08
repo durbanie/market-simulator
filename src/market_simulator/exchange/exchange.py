@@ -1,5 +1,6 @@
 """Exchange: order processing, validation, and state management."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -84,6 +85,19 @@ class Exchange:
             for instrument in config.instruments
         }
         self._transaction_feed = TransactionFeed(config.starting_transaction_id)
+        self._transaction_listeners: list[Callable[[Transaction], None]] = []
+
+    # -- Transaction listeners -----------------------------------------------
+
+    def add_transaction_listener(
+        self, callback: Callable[[Transaction], None],
+    ) -> None:
+        """Register a callback invoked for each new transaction.
+
+        In local mode, this is a direct function call. In network mode,
+        the listener would be replaced by a WebSocket push.
+        """
+        self._transaction_listeners.append(callback)
 
     # -- Open / Close -------------------------------------------------------
 
@@ -356,6 +370,8 @@ class Exchange:
             )
             self._next_transaction_id += 1
             self._transaction_feed.append(txn)
+            for listener in self._transaction_listeners:
+                listener(txn)
 
     # -- Order modification -------------------------------------------------
 
