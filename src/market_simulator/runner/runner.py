@@ -10,6 +10,7 @@ from market_simulator.core.exchange_enums import APILevel, Action, OrderType, Si
 from market_simulator.core.messages import DepthRequest
 from market_simulator.exchange.client.local_dma_client import LocalDMAClient
 from market_simulator.exchange.exchange import Exchange
+from market_simulator.exchange.feed_handler import FeedHandler
 from market_simulator.runner.config import RunnerConfig
 
 
@@ -38,17 +39,27 @@ class Runner:
             offset_us=config.clock_offset_us,
         )
         self._exchange = Exchange(config.exchange, self._clock)
+        self._feed_handler = FeedHandler(
+            self._exchange,
+            starting_transaction_id=config.exchange.starting_transaction_id,
+        )
 
         self._clients: dict[int, LocalDMAClient] = {}
         for level in (APILevel.L1, APILevel.L2, APILevel.L3):
             count = getattr(config.participants, level.value)
             for _ in range(count):
-                client = LocalDMAClient(self._exchange, api_level=level)
+                client = LocalDMAClient(
+                    self._exchange, api_level=level,
+                    feed_handler=self._feed_handler,
+                )
                 resp = client.register()
                 self._clients[resp.participant_id] = client
 
         # Register a dedicated L3 client for runner queries (depth, txns).
-        self._query_client = LocalDMAClient(self._exchange, api_level=APILevel.L3)
+        self._query_client = LocalDMAClient(
+            self._exchange, api_level=APILevel.L3,
+            feed_handler=self._feed_handler,
+        )
         self._query_client.register()
         self._query_client.subscribe_transaction_feed()
 
@@ -63,6 +74,11 @@ class Runner:
     def exchange(self) -> Exchange:
         """The exchange instance."""
         return self._exchange
+
+    @property
+    def feed_handler(self) -> FeedHandler:
+        """The feed handler instance."""
+        return self._feed_handler
 
     @property
     def clients(self) -> dict[int, LocalDMAClient]:
